@@ -1,7 +1,8 @@
 """
-PropertiesPanel - Property editor for selected components.
+PropertiesPanel - Tabbed property editor for selected components.
 
-Shows and edits properties of the currently selected component.
+Shows and edits properties of the currently selected component
+with multiple tabs for different property categories.
 """
 
 from __future__ import annotations
@@ -9,7 +10,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional, List
 from PyQt6.QtWidgets import (
     QDockWidget, QWidget, QVBoxLayout, QFormLayout, QLabel,
-    QLineEdit, QDoubleSpinBox, QGroupBox, QScrollArea, QFrame
+    QLineEdit, QDoubleSpinBox, QGroupBox, QScrollArea, QFrame,
+    QTabWidget, QSpinBox
 )
 from PyQt6.QtCore import Qt
 
@@ -20,44 +22,76 @@ if TYPE_CHECKING:
 
 class PropertiesPanel(QDockWidget):
     """
-    Dock widget for viewing/editing selected component properties.
+    Tabbed dock widget for viewing/editing selected component properties.
     
-    Dynamically builds form based on selected item type.
+    Tabs:
+        - General: Name, position, ports
+        - Parameters: Component-specific parameters
+        - Mass Balance: (placeholder for future)
+        - Energy Balance: (placeholder for future)
+        - Iteration: (placeholder for future)
     """
     
     def __init__(self, parent=None):
         super().__init__("Properties", parent)
         
         self.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
-        self.setMinimumWidth(250)
+        self.setMinimumWidth(280)
         
         self._current_item: Optional[BaseComponentItem] = None
         
         self._setup_ui()
     
     def _setup_ui(self):
-        """Create the UI layout."""
-        # Scroll area for long property lists
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        """Create the tabbed UI layout."""
+        self._main_widget = QWidget()
+        self._main_layout = QVBoxLayout(self._main_widget)
+        self._main_layout.setContentsMargins(0, 0, 0, 0)
         
-        self._container = QWidget()
-        self._layout = QVBoxLayout(self._container)
-        self._layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        # Header label (component type)
+        self._header = QLabel("No Selection")
+        self._header.setStyleSheet("font-size: 14px; font-weight: bold; color: #4a90d9; padding: 8px;")
+        self._main_layout.addWidget(self._header)
         
-        # Placeholder
-        self._placeholder = QLabel("Select a component")
-        self._placeholder.setStyleSheet("color: #888; padding: 20px;")
-        self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._layout.addWidget(self._placeholder)
+        # Tab widget
+        self._tabs = QTabWidget()
+        self._tabs.setDocumentMode(True)
+        self._main_layout.addWidget(self._tabs)
         
-        scroll.setWidget(self._container)
-        self.setWidget(scroll)
+        # Create tabs
+        self._general_tab = self._create_scroll_tab()
+        self._params_tab = self._create_scroll_tab()
+        self._mass_balance_tab = self._create_scroll_tab()
+        self._energy_balance_tab = self._create_scroll_tab()
+        self._iteration_tab = self._create_scroll_tab()
+        
+        self._tabs.addTab(self._general_tab, "General")
+        self._tabs.addTab(self._params_tab, "Parameters")
+        self._tabs.addTab(self._mass_balance_tab, "Mass Bal.")
+        self._tabs.addTab(self._energy_balance_tab, "Energy Bal.")
+        self._tabs.addTab(self._iteration_tab, "Iteration")
+        
+        self.setWidget(self._main_widget)
         
         # Apply dark styling
         self.setStyleSheet("""
             QDockWidget {
+                color: #e0e0e0;
+            }
+            QTabWidget::pane {
+                border: 1px solid #4a4f5a;
+                background: #1e222a;
+            }
+            QTabBar::tab {
+                background: #2d323c;
+                color: #b0b0b0;
+                padding: 6px 10px;
+                border: 1px solid #4a4f5a;
+                border-bottom: none;
+                margin-right: 2px;
+            }
+            QTabBar::tab:selected {
+                background: #1e222a;
                 color: #e0e0e0;
             }
             QGroupBox {
@@ -72,17 +106,91 @@ class PropertiesPanel(QDockWidget):
                 left: 10px;
                 padding: 0 5px;
             }
-            QLineEdit, QDoubleSpinBox {
+            QLineEdit, QDoubleSpinBox, QSpinBox {
                 background-color: #2d323c;
                 color: #e0e0e0;
                 border: 1px solid #4a4f5a;
                 border-radius: 3px;
                 padding: 4px;
+                min-height: 20px;
+            }
+            QDoubleSpinBox::up-button, QDoubleSpinBox::down-button,
+            QSpinBox::up-button, QSpinBox::down-button {
+                width: 20px;
+                background: #3d424c;
+                border: 1px solid #4a4f5a;
+            }
+            QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover,
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+                background: #4d525c;
+            }
+            QDoubleSpinBox::up-arrow, QSpinBox::up-arrow {
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-bottom: 6px solid #b0b0b0;
+            }
+            QDoubleSpinBox::down-arrow, QSpinBox::down-arrow {
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 6px solid #b0b0b0;
             }
             QLabel {
                 color: #b0b0b0;
             }
         """)
+        
+        self._show_no_selection()
+    
+    def _create_scroll_tab(self) -> QScrollArea:
+        """Create a scrollable tab content area."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        
+        container = QWidget()
+        container.setObjectName("tab_container")
+        layout = QVBoxLayout(container)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        layout.setContentsMargins(5, 5, 5, 5)
+        
+        scroll.setWidget(container)
+        return scroll
+    
+    def _get_tab_layout(self, tab: QScrollArea) -> QVBoxLayout:
+        """Get the layout of a tab's container widget."""
+        return tab.widget().layout()
+    
+    def _clear_tab(self, tab: QScrollArea):
+        """Clear all widgets from a tab."""
+        layout = self._get_tab_layout(tab)
+        while layout.count():
+            child = layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+    
+    def _clear_all_tabs(self):
+        """Clear all tab contents."""
+        self._clear_tab(self._general_tab)
+        self._clear_tab(self._params_tab)
+        self._clear_tab(self._mass_balance_tab)
+        self._clear_tab(self._energy_balance_tab)
+        self._clear_tab(self._iteration_tab)
+    
+    def _show_no_selection(self):
+        """Show empty state."""
+        self._header.setText("No Selection")
+        self._clear_all_tabs()
+        
+        for tab in [self._general_tab, self._params_tab, self._mass_balance_tab,
+                    self._energy_balance_tab, self._iteration_tab]:
+            layout = self._get_tab_layout(tab)
+            label = QLabel("Select a component to view properties")
+            label.setStyleSheet("color: #666; padding: 20px;")
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setWordWrap(True)
+            layout.addWidget(label)
     
     def set_selection(self, items: List):
         """
@@ -91,22 +199,26 @@ class PropertiesPanel(QDockWidget):
         Args:
             items: List of selected QGraphicsItems
         """
-        # Clear current content
-        self._clear_content()
+        self._clear_all_tabs()
         
         if not items:
-            self._show_placeholder("Select a component")
+            self._show_no_selection()
             self._current_item = None
             return
         
         if len(items) > 1:
-            self._show_placeholder(f"{len(items)} items selected")
+            self._header.setText(f"{len(items)} Items Selected")
             self._current_item = None
+            for tab in [self._general_tab, self._params_tab]:
+                layout = self._get_tab_layout(tab)
+                label = QLabel("Multiple items selected.\nEdit is not available.")
+                label.setStyleSheet("color: #888; padding: 20px;")
+                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                layout.addWidget(label)
             return
         
         item = items[0]
         
-        # Check item type
         from ..items.base_item import BaseComponentItem
         from ..items.flow_item import FlowItem
         
@@ -117,162 +229,259 @@ class PropertiesPanel(QDockWidget):
             self._show_flow_properties(item)
             self._current_item = None
         else:
-            self._show_placeholder("Unknown item type")
-    
-    def _clear_content(self):
-        """Remove all widgets from layout."""
-        while self._layout.count():
-            child = self._layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-    
-    def _show_placeholder(self, text: str):
-        """Show placeholder message."""
-        label = QLabel(text)
-        label.setStyleSheet("color: #888; padding: 20px;")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._layout.addWidget(label)
+            self._header.setText("Unknown Item")
     
     def _show_component_properties(self, item: BaseComponentItem):
-        """Build property form for component."""
-        # Header with component type
-        header = QLabel(f"<b>{item.component_type}</b>")
-        header.setStyleSheet("font-size: 14px; color: #4a90d9; padding: 5px;")
-        self._layout.addWidget(header)
+        """Build property form for component across tabs."""
+        self._header.setText(item.component_type)
         
-        # General properties group
-        general_group = QGroupBox("General")
-        general_layout = QFormLayout(general_group)
+        # === General Tab ===
+        general_layout = self._get_tab_layout(self._general_tab)
         
-        # Name field
+        # Identity group
+        id_group = QGroupBox("Identity")
+        id_layout = QFormLayout(id_group)
+        
         name_edit = QLineEdit(item.name)
         name_edit.textChanged.connect(lambda text: setattr(item, 'name', text))
-        general_layout.addRow("Name:", name_edit)
+        id_layout.addRow("Name:", name_edit)
         
-        # Position (read-only for now)
+        type_label = QLabel(item.component_type)
+        id_layout.addRow("Type:", type_label)
+        
+        general_layout.addWidget(id_group)
+        
+        # Position group
+        pos_group = QGroupBox("Position && Transform")
+        pos_layout = QFormLayout(pos_group)
+        
         pos_label = QLabel(f"({item.pos().x():.0f}, {item.pos().y():.0f})")
-        general_layout.addRow("Position:", pos_label)
+        pos_layout.addRow("Position:", pos_label)
         
-        self._layout.addWidget(general_group)
+        rot_label = QLabel(f"{item.rotation_angle}°")
+        pos_layout.addRow("Rotation:", rot_label)
         
-        # Ports group
+        flip_text = []
+        if item.is_flipped_h:
+            flip_text.append("H")
+        if item.is_flipped_v:
+            flip_text.append("V")
+        flip_label = QLabel(" + ".join(flip_text) if flip_text else "None")
+        pos_layout.addRow("Flip:", flip_label)
+        
+        scale_label = QLabel(f"{item.scale_factor:.1f}x")
+        pos_layout.addRow("Scale:", scale_label)
+        
+        general_layout.addWidget(pos_group)
+        
+        # Ports group - show what each port is connected to
         ports_group = QGroupBox("Ports")
         ports_layout = QFormLayout(ports_group)
         
-        # Input ports
         for port in item.input_ports:
-            status = "✓ Connected" if port.is_connected else "○ Open"
-            color = "#6a6" if port.is_connected else "#888"
-            label = QLabel(f'<span style="color: {color}">{status}</span>')
-            ports_layout.addRow(f"{port.name}:", label)
+            if port.is_connected and port.connected_flow:
+                flow = port.connected_flow
+                source_comp = flow.source_component
+                conn_name = source_comp.name if source_comp else "Unknown"
+                conn_port = flow.source_port.name if flow.source_port else ""
+                status = f'<span style="color: #6a6">→ {conn_name}.{conn_port}</span>'
+            else:
+                status = '<span style="color: #888">○ Not connected</span>'
+            label = QLabel(status)
+            ports_layout.addRow(f"⬤ {port.name}:", label)
         
-        # Output ports
         for port in item.output_ports:
-            status = "✓ Connected" if port.is_connected else "○ Open"
-            color = "#6a6" if port.is_connected else "#888"
-            label = QLabel(f'<span style="color: {color}">{status}</span>')
-            ports_layout.addRow(f"{port.name}:", label)
+            if port.is_connected and port.connected_flow:
+                flow = port.connected_flow
+                target_comp = flow.target_component
+                conn_name = target_comp.name if target_comp else "Unknown"
+                conn_port = flow.target_port.name if flow.target_port else ""
+                status = f'<span style="color: #6a6">→ {conn_name}.{conn_port}</span>'
+            else:
+                status = '<span style="color: #888">○ Not connected</span>'
+            label = QLabel(status)
+            ports_layout.addRow(f"◯ {port.name}:", label)
         
-        self._layout.addWidget(ports_group)
+        general_layout.addWidget(ports_group)
+        general_layout.addStretch()
         
-        # Add component-specific properties
+        # === Parameters Tab ===
         self._add_type_specific_properties(item)
         
-        # Spacer at bottom
-        self._layout.addStretch()
+        # === Mass Balance Tab ===
+        mass_layout = self._get_tab_layout(self._mass_balance_tab)
+        mass_group = QGroupBox("Mass Balance")
+        mass_form = QFormLayout(mass_group)
+        mass_form.addRow("Status:", QLabel("Not calculated"))
+        mass_form.addRow("Inlet Mass:", QLabel("— kg/s"))
+        mass_form.addRow("Outlet Mass:", QLabel("— kg/s"))
+        mass_form.addRow("Imbalance:", QLabel("— kg/s"))
+        mass_layout.addWidget(mass_group)
+        mass_layout.addStretch()
+        
+        # === Energy Balance Tab ===
+        energy_layout = self._get_tab_layout(self._energy_balance_tab)
+        energy_group = QGroupBox("Energy Balance")
+        energy_form = QFormLayout(energy_group)
+        energy_form.addRow("Status:", QLabel("Not calculated"))
+        energy_form.addRow("Inlet Energy:", QLabel("— MW"))
+        energy_form.addRow("Outlet Energy:", QLabel("— MW"))
+        energy_form.addRow("Heat Transfer:", QLabel("— MW"))
+        energy_form.addRow("Work:", QLabel("— MW"))
+        energy_layout.addWidget(energy_group)
+        energy_layout.addStretch()
+        
+        # === Iteration Tab ===
+        iter_layout = self._get_tab_layout(self._iteration_tab)
+        iter_group = QGroupBox("Iteration Status")
+        iter_form = QFormLayout(iter_group)
+        iter_form.addRow("Converged:", QLabel("—"))
+        iter_form.addRow("Iterations:", QLabel("—"))
+        iter_form.addRow("Residual:", QLabel("—"))
+        iter_form.addRow("Last Update:", QLabel("—"))
+        iter_layout.addWidget(iter_group)
+        iter_layout.addStretch()
     
     def _add_type_specific_properties(self, item: BaseComponentItem):
-        """Add properties specific to component type."""
+        """Add properties specific to component type to Parameters tab."""
         from ..items.turbine_item import TurbineItem
         from ..items.valve_item import ValveItem
         from ..items.heat_exchanger_item import HeatExchangerItem
         
+        params_layout = self._get_tab_layout(self._params_tab)
+        
         if isinstance(item, TurbineItem):
-            self._add_turbine_properties(item)
+            self._add_turbine_properties(params_layout, item)
         elif isinstance(item, ValveItem):
-            self._add_valve_properties(item)
+            self._add_valve_properties(params_layout, item)
         elif isinstance(item, HeatExchangerItem):
-            self._add_hx_properties(item)
+            self._add_hx_properties(params_layout, item)
+        else:
+            label = QLabel("No specific parameters for this component type")
+            label.setStyleSheet("color: #888; padding: 20px;")
+            params_layout.addWidget(label)
+        
+        params_layout.addStretch()
     
-    def _add_turbine_properties(self, item):
+    def _add_turbine_properties(self, layout, item):
         """Add turbine-specific properties."""
         group = QGroupBox("Turbine Parameters")
-        layout = QFormLayout(group)
+        form = QFormLayout(group)
         
-        # Efficiency
         efficiency = QDoubleSpinBox()
-        efficiency.setRange(0, 100)
+        efficiency.setRange(0.0, 100.0)
+        efficiency.setSingleStep(0.5)
+        efficiency.setDecimals(1)
         efficiency.setSuffix(" %")
         efficiency.setValue(88.0)
-        layout.addRow("Efficiency:", efficiency)
+        form.addRow("Efficiency:", efficiency)
         
-        # Power output (read-only, calculated)
-        power = QLabel("— MW")
-        layout.addRow("Power Output:", power)
+        stages = QSpinBox()
+        stages.setRange(1, 20)
+        stages.setValue(5)
+        form.addRow("Stages:", stages)
         
-        self._layout.addWidget(group)
+        layout.addWidget(group)
+        
+        results_group = QGroupBox("Calculated Results")
+        results_form = QFormLayout(results_group)
+        results_form.addRow("Power Output:", QLabel("— MW"))
+        results_form.addRow("Exhaust Pressure:", QLabel("— bar"))
+        results_form.addRow("Exhaust Quality:", QLabel("— %"))
+        layout.addWidget(results_group)
     
-    def _add_valve_properties(self, item):
+    def _add_valve_properties(self, layout, item):
         """Add valve-specific properties."""
         group = QGroupBox("Valve Parameters")
-        layout = QFormLayout(group)
+        form = QFormLayout(group)
         
-        # Opening
         opening = QDoubleSpinBox()
-        opening.setRange(0, 100)
+        opening.setRange(0.0, 100.0)
+        opening.setSingleStep(1.0)
+        opening.setDecimals(1)
         opening.setSuffix(" %")
         opening.setValue(100.0)
-        layout.addRow("Opening:", opening)
+        form.addRow("Opening:", opening)
         
-        self._layout.addWidget(group)
+        cv = QDoubleSpinBox()
+        cv.setRange(0.0, 10000.0)
+        cv.setSingleStep(10.0)
+        cv.setDecimals(1)
+        cv.setValue(100.0)
+        form.addRow("Cv:", cv)
+        
+        layout.addWidget(group)
+        
+        results_group = QGroupBox("Calculated Results")
+        results_form = QFormLayout(results_group)
+        results_form.addRow("Pressure Drop:", QLabel("— bar"))
+        results_form.addRow("Flow Rate:", QLabel("— kg/s"))
+        layout.addWidget(results_group)
     
-    def _add_hx_properties(self, item):
+    def _add_hx_properties(self, layout, item):
         """Add heat exchanger properties."""
         group = QGroupBox("Heat Exchanger Parameters")
-        layout = QFormLayout(group)
+        form = QFormLayout(group)
         
-        # Heat duty (calculated)
-        duty = QLabel("— MW")
-        layout.addRow("Heat Duty:", duty)
-        
-        # TTD
         ttd = QDoubleSpinBox()
-        ttd.setRange(0, 50)
+        ttd.setRange(0.0, 50.0)
+        ttd.setSingleStep(0.5)
+        ttd.setDecimals(1)
         ttd.setSuffix(" °C")
         ttd.setValue(5.0)
-        layout.addRow("TTD:", ttd)
+        form.addRow("TTD:", ttd)
         
-        self._layout.addWidget(group)
+        dca = QDoubleSpinBox()
+        dca.setRange(0.0, 50.0)
+        dca.setSingleStep(0.5)
+        dca.setDecimals(1)
+        dca.setSuffix(" °C")
+        dca.setValue(5.0)
+        form.addRow("DCA:", dca)
+        
+        layout.addWidget(group)
+        
+        results_group = QGroupBox("Calculated Results")
+        results_form = QFormLayout(results_group)
+        results_form.addRow("Heat Duty:", QLabel("— MW"))
+        results_form.addRow("LMTD:", QLabel("— °C"))
+        results_form.addRow("UA:", QLabel("— kW/°C"))
+        layout.addWidget(results_group)
     
     def _show_flow_properties(self, flow: FlowItem):
         """Show properties for a flow connection."""
-        header = QLabel("<b>Flow Connection</b>")
-        header.setStyleSheet("font-size: 14px; color: #4a90d9; padding: 5px;")
-        self._layout.addWidget(header)
+        self._header.setText("Flow Connection")
         
-        group = QGroupBox("Connection")
-        layout = QFormLayout(group)
+        # === General Tab ===
+        general_layout = self._get_tab_layout(self._general_tab)
         
-        # Source and target
+        conn_group = QGroupBox("Connection")
+        conn_layout = QFormLayout(conn_group)
+        
         source = flow.source_component
         target = flow.target_component
         
-        source_text = f"{source.name} → {flow.source_port.name}" if source else "—"
-        target_text = f"{target.name} → {flow.target_port.name}" if target else "—"
+        source_text = f"{source.name}.{flow.source_port.name}" if source else "—"
+        target_text = f"{target.name}.{flow.target_port.name}" if target else "—"
         
-        layout.addRow("From:", QLabel(source_text))
-        layout.addRow("To:", QLabel(target_text))
+        conn_layout.addRow("From:", QLabel(source_text))
+        conn_layout.addRow("To:", QLabel(target_text))
         
-        self._layout.addWidget(group)
+        waypoints = len(flow.waypoints)
+        conn_layout.addRow("Waypoints:", QLabel(str(waypoints)))
         
-        # Flow properties group
-        props_group = QGroupBox("Flow Properties")
+        general_layout.addWidget(conn_group)
+        general_layout.addStretch()
+        
+        # === Parameters Tab ===
+        params_layout = self._get_tab_layout(self._params_tab)
+        
+        props_group = QGroupBox("Flow State")
         props_layout = QFormLayout(props_group)
-        
         props_layout.addRow("Pressure:", QLabel("— bar"))
         props_layout.addRow("Temperature:", QLabel("— °C"))
         props_layout.addRow("Enthalpy:", QLabel("— kJ/kg"))
         props_layout.addRow("Mass Flow:", QLabel("— kg/s"))
-        
-        self._layout.addWidget(props_group)
-        self._layout.addStretch()
+        props_layout.addRow("Quality:", QLabel("— %"))
+        params_layout.addWidget(props_group)
+        params_layout.addStretch()

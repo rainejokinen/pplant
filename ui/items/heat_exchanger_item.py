@@ -1,5 +1,8 @@
 """
-Heat exchanger component items.
+Heat exchanger component items (VWO-style with modern touches).
+
+Square/rectangle shapes with diagonal lines indicating heat transfer.
+Red outline for steam/condensate, blue for water.
 
 Includes:
 - HeatExchangerItem (base)
@@ -23,60 +26,60 @@ from .base_item import BaseComponentItem
 
 class HeatExchangerItem(BaseComponentItem):
     """
-    Heat exchanger graphics item.
+    Heat exchanger graphics item (VWO-style square with diagonals).
     
-    Visual: Rectangle with internal tube pattern
+    Visual: Square with X pattern inside (as in VWO image)
     Ports:
-        - Cold side: cold_inlet (bottom-left), cold_outlet (bottom-right)
-        - Hot side: hot_inlet_1 (top-left), hot_inlet_2 (top-center), hot_outlet (top-right)
+        - Cold side: cold_inlet (left), cold_outlet (right)
+        - Hot side: hot_inlet_1 (top), hot_inlet_2 (top), hot_outlet (bottom)
     """
     
     # Dimensions
-    WIDTH = 100
-    HEIGHT = 60
+    WIDTH = 50
+    HEIGHT = 50
     
-    # Colors
-    COLOR_COLD = QColor(80, 180, 255)        # Cyan
-    COLOR_HOT = QColor(255, 120, 100)        # Coral
-    COLOR_BODY = QColor(60, 65, 75)
-    COLOR_BORDER = QColor(120, 130, 150)
+    # Colors (VWO-style red outline)
+    COLOR_OUTLINE = QColor(255, 0, 0)         # Red outline
+    COLOR_FILL = QColor(255, 250, 250)        # Very light pink/white
+    COLOR_FILL_ACCENT = QColor(255, 240, 240) # Subtle pink for gradient
+    COLOR_SELECTED = QColor(255, 200, 50)     # Gold selection
     
     def __init__(self, name: str = "", parent: Optional[QGraphicsItem] = None):
         super().__init__(name=name, parent=parent)
     
     def _create_ports(self):
         """Create HX ports: 3 in, 2 out."""
-        # Cold side (bottom)
+        # Cold side (horizontal through)
         self.add_input_port(
-            QPointF(-self.WIDTH / 3, self.HEIGHT / 2),
+            QPointF(-self.WIDTH / 2, 0),
             name="cold_inlet",
             is_mandatory=True
         )
         self.add_output_port(
-            QPointF(self.WIDTH / 3, self.HEIGHT / 2),
+            QPointF(self.WIDTH / 2, 0),
             name="cold_outlet",
             is_mandatory=True
         )
         
-        # Hot side (top)
+        # Hot side (vertical through)
         self.add_input_port(
-            QPointF(-self.WIDTH / 3, -self.HEIGHT / 2),
+            QPointF(0, -self.HEIGHT / 2),
             name="hot_inlet_1",
             is_mandatory=True
         )
         self.add_input_port(
-            QPointF(0, -self.HEIGHT / 2),
+            QPointF(self.WIDTH / 4, -self.HEIGHT / 2),
             name="hot_inlet_2",
             is_mandatory=False
         )
         self.add_output_port(
-            QPointF(self.WIDTH / 3, -self.HEIGHT / 2),
+            QPointF(0, self.HEIGHT / 2),
             name="hot_outlet",
             is_mandatory=True
         )
     
     def boundingRect(self) -> QRectF:
-        margin = 5
+        margin = 8
         return QRectF(
             -self.WIDTH / 2 - margin,
             -self.HEIGHT / 2 - margin,
@@ -85,134 +88,108 @@ class HeatExchangerItem(BaseComponentItem):
         )
     
     def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: Optional[QWidget] = None):
-        """Paint heat exchanger symbol."""
-        # Main body
-        body_rect = QRectF(-self.WIDTH / 2, -self.HEIGHT / 2, self.WIDTH, self.HEIGHT)
+        """Paint heat exchanger symbol (VWO-style square with X)."""
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # Two-tone gradient (hot top, cold bottom)
+        # Main body - square
+        rect = QRectF(-self.WIDTH / 2, -self.HEIGHT / 2, self.WIDTH, self.HEIGHT)
+        
+        # Subtle gradient fill
         gradient = QLinearGradient(0, -self.HEIGHT / 2, 0, self.HEIGHT / 2)
-        gradient.setColorAt(0, self.COLOR_HOT.darker(150))
-        gradient.setColorAt(0.5, self.COLOR_BODY)
-        gradient.setColorAt(1, self.COLOR_COLD.darker(150))
+        gradient.setColorAt(0, self.COLOR_FILL)
+        gradient.setColorAt(1, self.COLOR_FILL_ACCENT)
         
         painter.setBrush(QBrush(gradient))
-        painter.setPen(QPen(self.COLOR_BORDER, 2))
-        painter.drawRoundedRect(body_rect, 5, 5)
+        pen_width = 2.5 if self.isSelected() else 2
+        pen_color = self.COLOR_SELECTED if self.isSelected() else self.COLOR_OUTLINE
+        painter.setPen(QPen(pen_color, pen_width))
+        painter.drawRect(rect)
         
-        # Draw internal tubes pattern
-        self._draw_tubes(painter)
+        # Draw X pattern inside (VWO-style)
+        painter.setPen(QPen(self.COLOR_OUTLINE, 1.5))
+        m = 4  # margin from edge
+        # First diagonal
+        painter.drawLine(
+            int(-self.WIDTH/2 + m), int(-self.HEIGHT/2 + m),
+            int(self.WIDTH/2 - m), int(self.HEIGHT/2 - m)
+        )
+        # Second diagonal
+        painter.drawLine(
+            int(-self.WIDTH/2 + m), int(self.HEIGHT/2 - m),
+            int(self.WIDTH/2 - m), int(-self.HEIGHT/2 + m)
+        )
         
-        # Selection highlight
-        path = QPainterPath()
-        path.addRoundedRect(body_rect, 5, 5)
-        self.paint_selection_highlight(painter, path)
-        
-        # Label
+        # Draw label above
         if self._name:
-            painter.setPen(Qt.GlobalColor.white)
-            painter.setFont(QFont("Arial", 8))
-            painter.drawText(body_rect, Qt.AlignmentFlag.AlignCenter, self._name)
-    
-    def _draw_tubes(self, painter: QPainter):
-        """Draw internal tube pattern."""
-        painter.setPen(QPen(self.COLOR_COLD, 1.5))
-        
-        # Horizontal tubes
-        y_positions = [-self.HEIGHT / 6, self.HEIGHT / 6]
-        for y in y_positions:
-            painter.drawLine(
-                int(-self.WIDTH / 2 + 10), int(y),
-                int(self.WIDTH / 2 - 10), int(y)
+            painter.setPen(QColor(0, 0, 0))
+            painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+            painter.drawText(
+                QRectF(-self.WIDTH, -self.HEIGHT/2 - 18, self.WIDTH * 2, 14),
+                Qt.AlignmentFlag.AlignCenter, 
+                self._name
             )
 
 
 class CondenserItem(HeatExchangerItem):
     """
-    Condenser - steam to condensate heat exchanger.
-    
-    Visual: Rectangle with rounded bottom (shell shape)
+    Condenser - larger rectangle (VWO KLV style, yellow/tan).
     """
     
-    COLOR_BODY = QColor(50, 60, 80)
+    WIDTH = 80
+    HEIGHT = 40
+    
+    # Condenser colors (tan/yellow like VWO)
+    COLOR_FILL = QColor(255, 235, 180)
+    COLOR_FILL_ACCENT = QColor(255, 220, 150)
+    COLOR_OUTLINE = QColor(0, 0, 0)
     
     def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: Optional[QWidget] = None):
-        """Paint condenser with rounded bottom."""
-        path = QPainterPath()
+        """Paint condenser (larger rectangle, VWO yellow/tan)."""
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # Rounded bottom rectangle
-        path.moveTo(-self.WIDTH / 2, -self.HEIGHT / 2)
-        path.lineTo(self.WIDTH / 2, -self.HEIGHT / 2)
-        path.lineTo(self.WIDTH / 2, self.HEIGHT / 4)
-        path.arcTo(
-            -self.WIDTH / 2, self.HEIGHT / 4 - self.HEIGHT / 4,
-            self.WIDTH, self.HEIGHT / 2,
-            0, -180
-        )
-        path.closeSubpath()
+        rect = QRectF(-self.WIDTH / 2, -self.HEIGHT / 2, self.WIDTH, self.HEIGHT)
         
-        # Gradient
+        # Gradient fill
         gradient = QLinearGradient(0, -self.HEIGHT / 2, 0, self.HEIGHT / 2)
-        gradient.setColorAt(0, self.COLOR_HOT.darker(150))
-        gradient.setColorAt(1, self.COLOR_COLD.darker(120))
+        gradient.setColorAt(0, self.COLOR_FILL)
+        gradient.setColorAt(1, self.COLOR_FILL_ACCENT)
         
         painter.setBrush(QBrush(gradient))
-        painter.setPen(QPen(self.COLOR_BORDER, 2))
-        painter.drawPath(path)
+        pen_width = 2.5 if self.isSelected() else 2
+        pen_color = self.COLOR_SELECTED if self.isSelected() else self.COLOR_OUTLINE
+        painter.setPen(QPen(pen_color, pen_width))
+        painter.drawRect(rect)
         
-        # Internal pattern
-        self._draw_tubes(painter)
+        # Internal horizontal lines pattern (tube bundle representation)
+        painter.setPen(QPen(QColor(0, 0, 0), 1))
+        for i in range(1, 4):
+            y = -self.HEIGHT/2 + (self.HEIGHT * i / 4)
+            painter.drawLine(int(-self.WIDTH/2 + 5), int(y), int(self.WIDTH/2 - 5), int(y))
         
-        # Selection
-        self.paint_selection_highlight(painter, path)
-        
-        # Label
+        # Label centered
         if self._name:
-            painter.setPen(Qt.GlobalColor.white)
-            painter.setFont(QFont("Arial", 8))
-            painter.drawText(self.boundingRect(), Qt.AlignmentFlag.AlignCenter, self._name)
+            painter.setPen(QColor(0, 0, 0))
+            painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self._name)
 
 
 class FeedwaterHeaterItem(HeatExchangerItem):
     """
-    Feedwater heater (FWH/FWT).
-    
-    Visual: Horizontal cylinder shape
+    Feedwater heater (FWH/FWT) - VWO style square with X, red outline.
     """
     
-    COLOR_BODY = QColor(70, 80, 100)
-    
-    def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: Optional[QWidget] = None):
-        """Paint FWH as horizontal cylinder."""
-        # Main body
-        body_rect = QRectF(-self.WIDTH / 2, -self.HEIGHT / 2, self.WIDTH, self.HEIGHT)
-        
-        gradient = QLinearGradient(0, -self.HEIGHT / 2, 0, self.HEIGHT / 2)
-        gradient.setColorAt(0, self.COLOR_BODY.lighter(130))
-        gradient.setColorAt(0.5, self.COLOR_BODY)
-        gradient.setColorAt(1, self.COLOR_BODY.darker(120))
-        
-        painter.setBrush(QBrush(gradient))
-        painter.setPen(QPen(self.COLOR_BORDER, 2))
-        painter.drawRoundedRect(body_rect, self.HEIGHT / 2, self.HEIGHT / 2)
-        
-        # Selection
-        path = QPainterPath()
-        path.addRoundedRect(body_rect, self.HEIGHT / 2, self.HEIGHT / 2)
-        self.paint_selection_highlight(painter, path)
-        
-        # Label
-        if self._name:
-            painter.setPen(Qt.GlobalColor.white)
-            painter.setFont(QFont("Arial", 8))
-            painter.drawText(body_rect, Qt.AlignmentFlag.AlignCenter, self._name)
+    COLOR_OUTLINE = QColor(255, 0, 0)         # Red like VWO
+    COLOR_FILL = QColor(255, 250, 250)
+    COLOR_FILL_ACCENT = QColor(255, 240, 240)
 
 
 class WaterWaterHXItem(HeatExchangerItem):
     """
     Water-to-water heat exchanger.
-    
-    Same visual as base HX but with water-only colors.
+    Blue outline version.
     """
     
-    COLOR_HOT = QColor(255, 160, 120)   # Warm water
-    COLOR_COLD = QColor(100, 200, 255)  # Cool water
+    COLOR_OUTLINE = QColor(0, 0, 255)         # Blue
+    COLOR_FILL = QColor(250, 250, 255)        # Light blue-white
+    COLOR_FILL_ACCENT = QColor(240, 245, 255)
+

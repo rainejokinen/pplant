@@ -158,6 +158,16 @@ class MainWindow(QMainWindow):
         
         view_menu.addSeparator()
         
+        # Snap to grid toggle
+        self._snap_action = QAction("&Snap to Grid", self)
+        self._snap_action.setShortcut("Ctrl+G")
+        self._snap_action.setCheckable(True)
+        self._snap_action.setChecked(True)  # Default enabled
+        self._snap_action.triggered.connect(self._on_toggle_snap)
+        view_menu.addAction(self._snap_action)
+        
+        view_menu.addSeparator()
+        
         # Toggle panels
         view_menu.addAction(self._library.toggleViewAction())
         view_menu.addAction(self._properties.toggleViewAction())
@@ -200,6 +210,16 @@ class MainWindow(QMainWindow):
         toolbar.addAction("Zoom In").triggered.connect(self._view.zoom_in)
         toolbar.addAction("Zoom Out").triggered.connect(self._view.zoom_out)
         toolbar.addAction("Fit").triggered.connect(self._view.fit_to_contents)
+        
+        toolbar.addSeparator()
+        
+        # Snap toggle button
+        snap_btn = toolbar.addAction("⊞ Snap")
+        snap_btn.setCheckable(True)
+        snap_btn.setChecked(True)
+        snap_btn.setToolTip("Snap to Grid (Ctrl+G)")
+        snap_btn.triggered.connect(self._on_toggle_snap)
+        self._snap_toolbar_action = snap_btn
         
         toolbar.addSeparator()
         
@@ -350,6 +370,15 @@ class MainWindow(QMainWindow):
         """Select all items."""
         for item in self._scene.items():
             item.setSelected(True)
+    
+    def _on_toggle_snap(self, checked: bool):
+        """Toggle snap-to-grid."""
+        self._scene.set_snap_enabled(checked)
+        # Keep menu and toolbar in sync
+        self._snap_action.setChecked(checked)
+        self._snap_toolbar_action.setChecked(checked)
+        status = "enabled" if checked else "disabled"
+        self._statusbar.showMessage(f"Snap to grid {status}", 2000)
     
     def _on_run_simulation(self):
         """Run simulation."""

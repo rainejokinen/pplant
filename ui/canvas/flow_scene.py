@@ -46,6 +46,7 @@ class FlowScene(QGraphicsScene):
     flow_added = pyqtSignal(object)
     flow_removed = pyqtSignal(object)
     selection_changed_items = pyqtSignal(list)
+    snap_toggled = pyqtSignal(bool)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -56,6 +57,13 @@ class FlowScene(QGraphicsScene):
         # Item tracking
         self._components: list[BaseComponentItem] = []
         self._flows: list[FlowItem] = []
+        
+        # Component counters for auto-naming (type_name -> count)
+        self._component_counters: Dict[str, int] = {}
+        
+        # Snap to grid settings
+        self.snap_enabled = True
+        self.snap_grid_size = 20  # Should match GRID_SIZE_MINOR in FlowView
         
         # Connection drawing state
         self._is_connecting = False
@@ -68,6 +76,15 @@ class FlowScene(QGraphicsScene):
         # Connect selection changes
         self.selectionChanged.connect(self._on_selection_changed)
     
+    def set_snap_enabled(self, enabled: bool):
+        """Enable or disable snap-to-grid."""
+        self.snap_enabled = enabled
+        self.snap_toggled.emit(enabled)
+    
+    def toggle_snap(self):
+        """Toggle snap-to-grid on/off."""
+        self.set_snap_enabled(not self.snap_enabled)
+    
     def register_component_type(self, type_name: str, factory_class: Type[BaseComponentItem]):
         """
         Register a component type for drag-and-drop creation.
@@ -77,6 +94,18 @@ class FlowScene(QGraphicsScene):
             factory_class: The item class to instantiate
         """
         self._component_factories[type_name] = factory_class
+        if type_name not in self._component_counters:
+            self._component_counters[type_name] = 0
+    
+    def _generate_component_name(self, type_name: str) -> str:
+        """
+        Generate auto-name for a new component.
+        
+        Format: TypeName_001, TypeName_002, etc.
+        """
+        self._component_counters[type_name] = self._component_counters.get(type_name, 0) + 1
+        count = self._component_counters[type_name]
+        return f"{type_name}_{count:03d}"
     
     def create_component(self, type_name: str, pos: QPointF, name: str = "") -> Optional[BaseComponentItem]:
         """
@@ -85,7 +114,7 @@ class FlowScene(QGraphicsScene):
         Args:
             type_name: Registered component type
             pos: Scene position
-            name: Optional component name
+            name: Optional component name (auto-generated if empty)
             
         Returns:
             Created component item, or None if type not registered
@@ -93,6 +122,10 @@ class FlowScene(QGraphicsScene):
         if type_name not in self._component_factories:
             print(f"Unknown component type: {type_name}")
             return None
+        
+        # Auto-generate name if not provided
+        if not name:
+            name = self._generate_component_name(type_name)
         
         factory = self._component_factories[type_name]
         item = factory(name=name)

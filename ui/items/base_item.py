@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QStyleOptionGraphicsItem, QWidget
 )
 from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal
-from PyQt6.QtGui import QPainter, QPen, QColor, QBrush, QPainterPath
+from PyQt6.QtGui import QPainter, QPen, QColor, QBrush, QPainterPath, QTransform
 
 if TYPE_CHECKING:
     from ..canvas.flow_scene import FlowScene
@@ -29,6 +29,7 @@ class BaseComponentItem(QGraphicsObject):
         - Movable, selectable behavior
         - Selection highlighting (glow effect)
         - Port management
+        - Rotate/Flip/Scale transformations
         - Context menu with delete option
         - Link to model Component instance
     
@@ -45,6 +46,12 @@ class BaseComponentItem(QGraphicsObject):
     SELECTION_COLOR = QColor(255, 200, 50, 180)  # Gold glow
     SELECTION_WIDTH = 4
     
+    # Transform defaults
+    DEFAULT_SCALE = 1.0
+    MIN_SCALE = 0.5
+    MAX_SCALE = 2.0
+    SCALE_STEP = 0.1
+    
     def __init__(
         self,
         name: str = "",
@@ -58,6 +65,12 @@ class BaseComponentItem(QGraphicsObject):
         
         self._input_ports: List[PortItem] = []
         self._output_ports: List[PortItem] = []
+        
+        # Transform state
+        self._rotation_angle = 0  # degrees (0, 90, 180, 270)
+        self._flip_h = False       # horizontal flip
+        self._flip_v = False       # vertical flip
+        self._scale_factor = self.DEFAULT_SCALE
         
         self._setup_item()
         self._create_ports()
@@ -187,6 +200,18 @@ class BaseComponentItem(QGraphicsObject):
     
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value):
         """Handle item changes, particularly position changes."""
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
+            # Snap to grid if enabled
+            new_pos = value
+            scene = self.scene()
+            if scene and hasattr(scene, 'snap_enabled') and scene.snap_enabled:
+                grid_size = getattr(scene, 'snap_grid_size', 20)
+                new_pos = QPointF(
+                    round(new_pos.x() / grid_size) * grid_size,
+                    round(new_pos.y() / grid_size) * grid_size
+                )
+            return new_pos
+        
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
             # Notify connected flows to update their paths
             self.position_changed.emit(self)
@@ -204,6 +229,42 @@ class BaseComponentItem(QGraphicsObject):
         """Show context menu."""
         menu = QMenu()
         
+        # Transform submenu
+        transform_menu = menu.addMenu("Transform")
+        
+        rotate_cw = transform_menu.addAction("Rotate 90° CW (R)")
+        rotate_cw.triggered.connect(self.rotate_cw)
+        
+        rotate_ccw = transform_menu.addAction("Rotate 90° CCW (Shift+R)")
+        rotate_ccw.triggered.connect(self.rotate_ccw)
+        
+        transform_menu.addSeparator()
+        
+        flip_h = transform_menu.addAction("Flip Horizontal (H)")
+        flip_h.triggered.connect(self.flip_horizontal)
+        flip_h.setCheckable(True)
+        flip_h.setChecked(self._flip_h)
+        
+        flip_v = transform_menu.addAction("Flip Vertical (V)")
+        flip_v.triggered.connect(self.flip_vertical)
+        flip_v.setCheckable(True)
+        flip_v.setChecked(self._flip_v)
+        
+        transform_menu.addSeparator()
+        
+        scale_up = transform_menu.addAction("Scale Up (+)")
+        scale_up.triggered.connect(self.scale_up)
+        scale_up.setEnabled(self._scale_factor < self.MAX_SCALE)
+        
+        scale_down = transform_menu.addAction("Scale Down (-)")
+        scale_down.triggered.connect(self.scale_down)
+        scale_down.setEnabled(self._scale_factor > self.MIN_SCALE)
+        
+        reset_transform = transform_menu.addAction("Reset Transform")
+        reset_transform.triggered.connect(self.reset_transform)
+        
+        menu.addSeparator()
+        
         delete_action = menu.addAction("Delete")
         delete_action.triggered.connect(self._on_delete)
         
@@ -213,6 +274,32 @@ class BaseComponentItem(QGraphicsObject):
         props_action.triggered.connect(self._on_properties)
         
         menu.exec(event.screenPos())
+    
+    def keyPressEvent(self, event):
+        """Handle keyboard shortcuts for transforms."""
+        if event.key() == Qt.Key.Key_R:
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                self.rotate_ccw()
+            else:
+                self.rotate_cw()
+            event.accept()
+        elif event.key() == Qt.Key.Key_H:
+            self.flip_horizontal()
+            event.accept()
+        elif event.key() == Qt.Key.Key_V:
+            self.flip_vertical()
+            event.accept()
+        elif event.key() == Qt.Key.Key_Plus or event.key() == Qt.Key.Key_Equal:
+            self.scale_up()
+            event.accept()
+        elif event.key() == Qt.Key.Key_Minus:
+            self.scale_down()
+            event.accept()
+        elif event.key() == Qt.Key.Key_Delete:
+            self._on_delete()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
     
     def _on_delete(self):
         """Handle delete action."""
@@ -224,6 +311,89 @@ class BaseComponentItem(QGraphicsObject):
         """Handle properties action (can be overridden)."""
         # TODO: Open properties dialog
         pass
+    
+    # -------------------------------------------------------------------------
+    # Transform Methods
+    # -------------------------------------------------------------------------
+    
+    def _apply_transform(self):
+        """Apply current rotation, flip, and scale to the item."""
+        transform = QTransform()
+        
+        # Apply scale
+        transform.scale(self._scale_factor, self._scale_factor)
+        
+        # Apply flip
+        flip_x = -1 if self._flip_h else 1
+        flip_y = -1 if self._flip_v else 1
+        transform.scale(flip_x, flip_y)
+        
+        # Apply rotation
+        transform.rotate(self._rotation_angle)
+        
+        self.setTransform(transform)
+        self._update_connected_flows()
+        self.update()
+    
+    def rotate_cw(self):
+        """Rotate 90 degrees clockwise."""
+        self._rotation_angle = (self._rotation_angle + 90) % 360
+        self._apply_transform()
+    
+    def rotate_ccw(self):
+        """Rotate 90 degrees counter-clockwise."""
+        self._rotation_angle = (self._rotation_angle - 90) % 360
+        self._apply_transform()
+    
+    def flip_horizontal(self):
+        """Toggle horizontal flip."""
+        self._flip_h = not self._flip_h
+        self._apply_transform()
+    
+    def flip_vertical(self):
+        """Toggle vertical flip."""
+        self._flip_v = not self._flip_v
+        self._apply_transform()
+    
+    def scale_up(self):
+        """Increase scale by one step."""
+        if self._scale_factor < self.MAX_SCALE:
+            self._scale_factor = min(self._scale_factor + self.SCALE_STEP, self.MAX_SCALE)
+            self._apply_transform()
+    
+    def scale_down(self):
+        """Decrease scale by one step."""
+        if self._scale_factor > self.MIN_SCALE:
+            self._scale_factor = max(self._scale_factor - self.SCALE_STEP, self.MIN_SCALE)
+            self._apply_transform()
+    
+    def reset_transform(self):
+        """Reset all transforms to defaults."""
+        self._rotation_angle = 0
+        self._flip_h = False
+        self._flip_v = False
+        self._scale_factor = self.DEFAULT_SCALE
+        self._apply_transform()
+    
+    @property
+    def rotation_angle(self) -> int:
+        """Current rotation in degrees (0, 90, 180, 270)."""
+        return self._rotation_angle
+    
+    @property
+    def is_flipped_h(self) -> bool:
+        """Whether item is flipped horizontally."""
+        return self._flip_h
+    
+    @property
+    def is_flipped_v(self) -> bool:
+        """Whether item is flipped vertically."""
+        return self._flip_v
+    
+    @property
+    def scale_factor(self) -> float:
+        """Current scale factor."""
+        return self._scale_factor
     
     # -------------------------------------------------------------------------
     # Properties
