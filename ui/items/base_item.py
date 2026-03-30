@@ -10,15 +10,70 @@ from abc import abstractmethod
 from typing import TYPE_CHECKING, Optional, List
 from PyQt6.QtWidgets import (
     QGraphicsItem, QGraphicsObject, QMenu,
-    QStyleOptionGraphicsItem, QWidget
+    QStyleOptionGraphicsItem, QWidget, QGraphicsRectItem
 )
 from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal
-from PyQt6.QtGui import QPainter, QPen, QColor, QBrush, QPainterPath, QTransform
+from PyQt6.QtGui import QPainter, QPen, QColor, QBrush, QPainterPath, QTransform, QCursor
 
 if TYPE_CHECKING:
     from ..canvas.flow_scene import FlowScene
     from .port_item import PortItem
     from components.base import Component
+
+
+class ResizeHandle(QGraphicsRectItem):
+    """
+    Small handle in the corner for resizing components.
+    """
+    
+    SIZE = 8
+    
+    def __init__(self, parent_item: BaseComponentItem):
+        super().__init__(-self.SIZE/2, -self.SIZE/2, self.SIZE, self.SIZE, parent_item)
+        self._parent_item = parent_item
+        self._dragging = False
+        self._drag_start = QPointF()
+        self._original_scale = 1.0
+        
+        self.setBrush(QBrush(QColor(100, 150, 255)))
+        self.setPen(QPen(QColor(50, 100, 200), 1))
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+        self.setAcceptHoverEvents(True)
+        self.setCursor(QCursor(Qt.CursorShape.SizeFDiagCursor))
+        self.setZValue(100)
+        self.setVisible(False)  # Only show when selected
+    
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._dragging = True
+            self._drag_start = event.scenePos()
+            self._original_scale = self._parent_item._scale_factor
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+    
+    def mouseMoveEvent(self, event):
+        if self._dragging:
+            delta = event.scenePos() - self._drag_start
+            # Calculate scale change based on drag distance
+            scale_delta = (delta.x() + delta.y()) / 100
+            new_scale = max(
+                self._parent_item.MIN_SCALE,
+                min(self._parent_item.MAX_SCALE, self._original_scale + scale_delta)
+            )
+            self._parent_item._scale_factor = new_scale
+            self._parent_item._apply_transform()
+            self._parent_item._update_resize_handle_position()
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+    
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._dragging = False
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
 
 
 class BaseComponentItem(QGraphicsObject):
@@ -74,6 +129,7 @@ class BaseComponentItem(QGraphicsObject):
         
         self._setup_item()
         self._create_ports()
+        self._create_resize_handle()
     
     def _setup_item(self):
         """Configure item flags and behavior."""
@@ -82,6 +138,16 @@ class BaseComponentItem(QGraphicsObject):
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
         self.setAcceptHoverEvents(True)
         self.setCacheMode(QGraphicsItem.CacheMode.DeviceCoordinateCache)
+    
+    def _create_resize_handle(self):
+        """Create the resize handle in the bottom-right corner."""
+        self._resize_handle = ResizeHandle(self)
+        self._update_resize_handle_position()
+    
+    def _update_resize_handle_position(self):
+        """Position the resize handle at the bottom-right of the bounding rect."""
+        rect = self.boundingRect()
+        self._resize_handle.setPos(rect.right() - 4, rect.bottom() - 4)
     
     @abstractmethod
     def _create_ports(self):
@@ -216,6 +282,10 @@ class BaseComponentItem(QGraphicsObject):
             # Notify connected flows to update their paths
             self.position_changed.emit(self)
             self._update_connected_flows()
+        
+        if change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
+            # Show/hide resize handle based on selection
+            self._resize_handle.setVisible(value)
         
         return super().itemChange(change, value)
     

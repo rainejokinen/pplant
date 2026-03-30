@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Optional, List
 from PyQt6.QtWidgets import (
     QDockWidget, QWidget, QVBoxLayout, QFormLayout, QLabel,
     QLineEdit, QDoubleSpinBox, QGroupBox, QScrollArea, QFrame,
-    QTabWidget, QSpinBox
+    QTabWidget, QSpinBox, QTableWidget, QTableWidgetItem, QHeaderView
 )
 from PyQt6.QtCore import Qt
 
@@ -26,10 +26,10 @@ class PropertiesPanel(QDockWidget):
     
     Tabs:
         - General: Name, position, ports
-        - Parameters: Component-specific parameters
-        - Mass Balance: (placeholder for future)
-        - Energy Balance: (placeholder for future)
-        - Iteration: (placeholder for future)
+        - Parameters: Component-specific parameters (properties)
+        - Flows: Input/output flow states (p, t, h, m)
+        - Balance: Combined mass and energy balance
+        - Iteration: Solver status
     """
     
     def __init__(self, parent=None):
@@ -61,14 +61,14 @@ class PropertiesPanel(QDockWidget):
         # Create tabs
         self._general_tab = self._create_scroll_tab()
         self._params_tab = self._create_scroll_tab()
-        self._mass_balance_tab = self._create_scroll_tab()
-        self._energy_balance_tab = self._create_scroll_tab()
+        self._flows_tab = self._create_scroll_tab()
+        self._balance_tab = self._create_scroll_tab()
         self._iteration_tab = self._create_scroll_tab()
         
         self._tabs.addTab(self._general_tab, "General")
         self._tabs.addTab(self._params_tab, "Parameters")
-        self._tabs.addTab(self._mass_balance_tab, "Mass Bal.")
-        self._tabs.addTab(self._energy_balance_tab, "Energy Bal.")
+        self._tabs.addTab(self._flows_tab, "Flows")
+        self._tabs.addTab(self._balance_tab, "Balance")
         self._tabs.addTab(self._iteration_tab, "Iteration")
         
         self.setWidget(self._main_widget)
@@ -139,6 +139,21 @@ class PropertiesPanel(QDockWidget):
             QLabel {
                 color: #b0b0b0;
             }
+            QTableWidget {
+                background-color: #2d323c;
+                color: #e0e0e0;
+                border: 1px solid #4a4f5a;
+                gridline-color: #4a4f5a;
+            }
+            QTableWidget::item {
+                padding: 4px;
+            }
+            QHeaderView::section {
+                background-color: #3d424c;
+                color: #e0e0e0;
+                padding: 4px;
+                border: 1px solid #4a4f5a;
+            }
         """)
         
         self._show_no_selection()
@@ -174,8 +189,8 @@ class PropertiesPanel(QDockWidget):
         """Clear all tab contents."""
         self._clear_tab(self._general_tab)
         self._clear_tab(self._params_tab)
-        self._clear_tab(self._mass_balance_tab)
-        self._clear_tab(self._energy_balance_tab)
+        self._clear_tab(self._flows_tab)
+        self._clear_tab(self._balance_tab)
         self._clear_tab(self._iteration_tab)
     
     def _show_no_selection(self):
@@ -183,8 +198,8 @@ class PropertiesPanel(QDockWidget):
         self._header.setText("No Selection")
         self._clear_all_tabs()
         
-        for tab in [self._general_tab, self._params_tab, self._mass_balance_tab,
-                    self._energy_balance_tab, self._iteration_tab]:
+        for tab in [self._general_tab, self._params_tab, self._flows_tab,
+                    self._balance_tab, self._iteration_tab]:
             layout = self._get_tab_layout(tab)
             label = QLabel("Select a component to view properties")
             label.setStyleSheet("color: #666; padding: 20px;")
@@ -308,19 +323,20 @@ class PropertiesPanel(QDockWidget):
         # === Parameters Tab ===
         self._add_type_specific_properties(item)
         
-        # === Mass Balance Tab ===
-        mass_layout = self._get_tab_layout(self._mass_balance_tab)
+        # === Flows Tab ===
+        self._add_flows_tab(item)
+        
+        # === Balance Tab (Combined Mass & Energy) ===
+        balance_layout = self._get_tab_layout(self._balance_tab)
+        
         mass_group = QGroupBox("Mass Balance")
         mass_form = QFormLayout(mass_group)
         mass_form.addRow("Status:", QLabel("Not calculated"))
         mass_form.addRow("Inlet Mass:", QLabel("— kg/s"))
         mass_form.addRow("Outlet Mass:", QLabel("— kg/s"))
         mass_form.addRow("Imbalance:", QLabel("— kg/s"))
-        mass_layout.addWidget(mass_group)
-        mass_layout.addStretch()
+        balance_layout.addWidget(mass_group)
         
-        # === Energy Balance Tab ===
-        energy_layout = self._get_tab_layout(self._energy_balance_tab)
         energy_group = QGroupBox("Energy Balance")
         energy_form = QFormLayout(energy_group)
         energy_form.addRow("Status:", QLabel("Not calculated"))
@@ -328,8 +344,9 @@ class PropertiesPanel(QDockWidget):
         energy_form.addRow("Outlet Energy:", QLabel("— MW"))
         energy_form.addRow("Heat Transfer:", QLabel("— MW"))
         energy_form.addRow("Work:", QLabel("— MW"))
-        energy_layout.addWidget(energy_group)
-        energy_layout.addStretch()
+        energy_form.addRow("Imbalance:", QLabel("— MW"))
+        balance_layout.addWidget(energy_group)
+        balance_layout.addStretch()
         
         # === Iteration Tab ===
         iter_layout = self._get_tab_layout(self._iteration_tab)
@@ -341,6 +358,55 @@ class PropertiesPanel(QDockWidget):
         iter_form.addRow("Last Update:", QLabel("—"))
         iter_layout.addWidget(iter_group)
         iter_layout.addStretch()
+    
+    def _add_flows_tab(self, item: BaseComponentItem):
+        """Add flow parameters tab with tables for inlet/outlet flows."""
+        flows_layout = self._get_tab_layout(self._flows_tab)
+        
+        # Inlet flows table
+        inlet_group = QGroupBox("Inlet Flows")
+        inlet_layout = QVBoxLayout(inlet_group)
+        
+        inlet_table = QTableWidget()
+        inlet_table.setColumnCount(5)
+        inlet_table.setHorizontalHeaderLabels(["Port", "p (bar)", "t (°C)", "h (kJ/kg)", "m (kg/s)"])
+        inlet_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        inlet_table.verticalHeader().setVisible(False)
+        
+        # Add rows for each input port
+        inlet_table.setRowCount(len(item.input_ports))
+        for row, port in enumerate(item.input_ports):
+            inlet_table.setItem(row, 0, QTableWidgetItem(port.name))
+            inlet_table.setItem(row, 1, QTableWidgetItem("—"))
+            inlet_table.setItem(row, 2, QTableWidgetItem("—"))
+            inlet_table.setItem(row, 3, QTableWidgetItem("—"))
+            inlet_table.setItem(row, 4, QTableWidgetItem("—"))
+        
+        inlet_layout.addWidget(inlet_table)
+        flows_layout.addWidget(inlet_group)
+        
+        # Outlet flows table
+        outlet_group = QGroupBox("Outlet Flows")
+        outlet_layout = QVBoxLayout(outlet_group)
+        
+        outlet_table = QTableWidget()
+        outlet_table.setColumnCount(5)
+        outlet_table.setHorizontalHeaderLabels(["Port", "p (bar)", "t (°C)", "h (kJ/kg)", "m (kg/s)"])
+        outlet_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        outlet_table.verticalHeader().setVisible(False)
+        
+        # Add rows for each output port
+        outlet_table.setRowCount(len(item.output_ports))
+        for row, port in enumerate(item.output_ports):
+            outlet_table.setItem(row, 0, QTableWidgetItem(port.name))
+            outlet_table.setItem(row, 1, QTableWidgetItem("—"))
+            outlet_table.setItem(row, 2, QTableWidgetItem("—"))
+            outlet_table.setItem(row, 3, QTableWidgetItem("—"))
+            outlet_table.setItem(row, 4, QTableWidgetItem("—"))
+        
+        outlet_layout.addWidget(outlet_table)
+        flows_layout.addWidget(outlet_group)
+        flows_layout.addStretch()
     
     def _add_type_specific_properties(self, item: BaseComponentItem):
         """Add properties specific to component type to Parameters tab."""

@@ -186,7 +186,12 @@ class FlowItem(QGraphicsPathItem):
         self._update_waypoint_handles()
     
     def _create_auto_orthogonal_points(self, start: QPointF, end: QPointF) -> List[QPointF]:
-        """Create automatic orthogonal routing points."""
+        """
+        Create automatic orthogonal routing points.
+        
+        Forces lines to exit ports straight outward (perpendicular to component edge),
+        then routes orthogonally to destination.
+        """
         points = [start]
         
         dx = end.x() - start.x()
@@ -196,11 +201,40 @@ class FlowItem(QGraphicsPathItem):
             points.append(end)
             return points
         
-        # Simple routing: horizontal, vertical, horizontal
-        mid_x = start.x() + dx / 2
-        points.append(QPointF(mid_x, start.y()))  # Horizontal from start
-        points.append(QPointF(mid_x, end.y()))    # Vertical
-        points.append(end)  # Horizontal to end
+        # Minimum distance to go straight out of the port before turning
+        MIN_EXTEND = 30
+        
+        # Get port directions (assume horizontal ports)
+        # Source port exits to the right, target port enters from the left
+        source_extend = QPointF(start.x() + MIN_EXTEND, start.y())
+        target_extend = QPointF(end.x() - MIN_EXTEND, end.y())
+        
+        # If target is to the left of source, we need special routing
+        if dx < MIN_EXTEND * 2:
+            # Route: right, down/up, left, down/up, right
+            mid_y = (start.y() + end.y()) / 2
+            if abs(dy) < MIN_EXTEND:
+                # Components on same level, route around
+                mid_y = start.y() + (60 if dy >= 0 else -60)
+            
+            points.append(source_extend)
+            points.append(QPointF(source_extend.x(), mid_y))
+            points.append(QPointF(target_extend.x(), mid_y))
+            points.append(target_extend)
+            points.append(end)
+        else:
+            # Standard routing: right from source, vertical, left to target
+            mid_x = start.x() + dx / 2
+            
+            # Ensure we go straight out first
+            if mid_x < source_extend.x():
+                mid_x = source_extend.x()
+            if mid_x > target_extend.x():
+                mid_x = target_extend.x()
+            
+            points.append(QPointF(mid_x, start.y()))
+            points.append(QPointF(mid_x, end.y()))
+            points.append(end)
         
         return points
     

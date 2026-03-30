@@ -2,15 +2,15 @@
 FlowScene - Graphics scene for flow diagram components.
 
 Handles drag-and-drop component creation, interactive port connections,
-and manages all component and flow items.
+undo/redo, copy/paste, and manages all component and flow items.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, Dict, Type
-from PyQt6.QtWidgets import QGraphicsScene, QGraphicsLineItem, QGraphicsItem
+from typing import TYPE_CHECKING, Optional, Dict, Type, List, Any
+from PyQt6.QtWidgets import QGraphicsScene, QGraphicsLineItem, QGraphicsItem, QMenu, QInputDialog
 from PyQt6.QtCore import Qt, QPointF, pyqtSignal, QRectF
-from PyQt6.QtGui import QPen, QColor, QTransform
+from PyQt6.QtGui import QPen, QColor, QTransform, QUndoStack
 
 if TYPE_CHECKING:
     from .flow_view import FlowView
@@ -30,6 +30,8 @@ class FlowScene(QGraphicsScene):
     Features:
         - Drag-and-drop component creation from library
         - Interactive port-to-port connection drawing
+        - Undo/redo support
+        - Copy/paste functionality
         - Selection management with signals
         - Component and flow item tracking
     
@@ -39,6 +41,8 @@ class FlowScene(QGraphicsScene):
         flow_added(FlowItem): New flow connection created
         flow_removed(FlowItem): Flow connection removed
         selection_changed_items(list): List of currently selected items
+        snap_toggled(bool): Snap mode changed
+        snap_size_changed(int): Snap grid size changed
     """
     
     component_added = pyqtSignal(object)
@@ -47,6 +51,10 @@ class FlowScene(QGraphicsScene):
     flow_removed = pyqtSignal(object)
     selection_changed_items = pyqtSignal(list)
     snap_toggled = pyqtSignal(bool)
+    snap_size_changed = pyqtSignal(int)
+    
+    # Snap size presets
+    SNAP_SIZES = [5, 10, 20, 50, 100]
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -65,6 +73,12 @@ class FlowScene(QGraphicsScene):
         self.snap_enabled = True
         self.snap_grid_size = 20  # Should match GRID_SIZE_MINOR in FlowView
         
+        # Undo/Redo stack
+        self._undo_stack = QUndoStack(self)
+        
+        # Copy/paste clipboard
+        self._clipboard: List[Dict[str, Any]] = []
+        
         # Connection drawing state
         self._is_connecting = False
         self._connection_source: Optional[PortItem] = None
@@ -76,6 +90,11 @@ class FlowScene(QGraphicsScene):
         # Connect selection changes
         self.selectionChanged.connect(self._on_selection_changed)
     
+    @property
+    def undo_stack(self) -> QUndoStack:
+        """Get the undo stack."""
+        return self._undo_stack
+    
     def set_snap_enabled(self, enabled: bool):
         """Enable or disable snap-to-grid."""
         self.snap_enabled = enabled
@@ -84,6 +103,25 @@ class FlowScene(QGraphicsScene):
     def toggle_snap(self):
         """Toggle snap-to-grid on/off."""
         self.set_snap_enabled(not self.snap_enabled)
+    
+    def set_snap_size(self, size: int):
+        """Set snap grid size."""
+        self.snap_grid_size = max(1, size)
+        self.snap_size_changed.emit(self.snap_grid_size)
+    
+    def increase_snap_size(self):
+        """Increase snap size to next preset."""
+        for s in self.SNAP_SIZES:
+            if s > self.snap_grid_size:
+                self.set_snap_size(s)
+                return
+    
+    def decrease_snap_size(self):
+        """Decrease snap size to previous preset."""
+        for s in reversed(self.SNAP_SIZES):
+            if s < self.snap_grid_size:
+                self.set_snap_size(s)
+                return
     
     def register_component_type(self, type_name: str, factory_class: Type[BaseComponentItem]):
         """
@@ -109,7 +147,7 @@ class FlowScene(QGraphicsScene):
     
     def create_component(self, type_name: str, pos: QPointF, name: str = "") -> Optional[BaseComponentItem]:
         """
-        Create a component item at the specified position.
+        Create a component item at the specified position (with undo support).
         
         Args:
             type_name: Registered component type
@@ -119,6 +157,13 @@ class FlowScene(QGraphicsScene):
         Returns:
             Created component item, or None if type not registered
         """
+        from .undo_commands import AddComponentCommand
+        cmd = AddComponentCommand(self, type_name, pos, name)
+        self._undo_stack.push(cmd)
+        return cmd._item
+    
+    def _create_component_internal(self, type_name: str, pos: QPointF, name: str = "") -> Optional[BaseComponentItem]:
+        """Internal component creation without undo."""
         if type_name not in self._component_factories:
             print(f"Unknown component type: {type_name}")
             return None
@@ -133,14 +178,31 @@ class FlowScene(QGraphicsScene):
         self.addItem(item)
         self._components.append(item)
         self.component_added.emit(item)
+        
+        # Update all flows to check crossings
+        self._refresh_all_flow_paths()
+        
         return item
     
+    def _restore_component(self, item: BaseComponentItem):
+        """Restore a component to the scene (for undo)."""
+        if item not in self._components:
+            self.addItem(item)
+            self._components.append(item)
+            self.component_added.emit(item)
+    
     def remove_component(self, item: BaseComponentItem):
-        """Remove a component and its connected flows."""
+        """Remove a component and its connected flows (with undo support)."""
+        from .undo_commands import RemoveComponentCommand
+        cmd = RemoveComponentCommand(self, item)
+        self._undo_stack.push(cmd)
+    
+    def _remove_component_internal(self, item: BaseComponentItem):
+        """Internal component removal without undo."""
         # Remove connected flows first
         flows_to_remove = [f for f in self._flows if f.is_connected_to(item)]
         for flow in flows_to_remove:
-            self.remove_flow(flow)
+            self._remove_flow_internal(flow)
         
         # Remove the component
         if item in self._components:
@@ -150,7 +212,7 @@ class FlowScene(QGraphicsScene):
     
     def add_flow(self, source_port: PortItem, target_port: PortItem) -> Optional[FlowItem]:
         """
-        Create a flow connection between two ports.
+        Create a flow connection between two ports (with undo support).
         
         Args:
             source_port: Output port (source)
@@ -159,26 +221,60 @@ class FlowScene(QGraphicsScene):
         Returns:
             Created FlowItem, or None if connection invalid
         """
-        # Import here to avoid circular imports
-        from ..items.flow_item import FlowItem
-        
         # Validate connection
         if not self._can_connect(source_port, target_port):
             return None
+        
+        from .undo_commands import AddFlowCommand
+        cmd = AddFlowCommand(self, source_port, target_port)
+        self._undo_stack.push(cmd)
+        return cmd._flow
+    
+    def _create_flow_internal(self, source_port: PortItem, target_port: PortItem) -> Optional[FlowItem]:
+        """Internal flow creation without undo."""
+        from ..items.flow_item import FlowItem
         
         flow = FlowItem(source_port, target_port)
         self.addItem(flow)
         self._flows.append(flow)
         self.flow_added.emit(flow)
+        
+        # Refresh all flow paths for crossing detection
+        self._refresh_all_flow_paths()
+        
         return flow
     
+    def _restore_flow(self, flow: FlowItem):
+        """Restore a flow to the scene (for undo)."""
+        if flow not in self._flows:
+            # Reconnect ports
+            flow._source_port.connected_flow = flow
+            flow._target_port.connected_flow = flow
+            self.addItem(flow)
+            self._flows.append(flow)
+            flow.update_path()
+            self.flow_added.emit(flow)
+            self._refresh_all_flow_paths()
+    
     def remove_flow(self, flow: FlowItem):
-        """Remove a flow connection."""
+        """Remove a flow connection (with undo support)."""
+        from .undo_commands import RemoveFlowCommand
+        cmd = RemoveFlowCommand(self, flow)
+        self._undo_stack.push(cmd)
+    
+    def _remove_flow_internal(self, flow: FlowItem):
+        """Internal flow removal without undo."""
         flow.disconnect()
         if flow in self._flows:
             self._flows.remove(flow)
         self.removeItem(flow)
         self.flow_removed.emit(flow)
+        self._refresh_all_flow_paths()
+    
+    def _refresh_all_flow_paths(self):
+        """Refresh all flow paths (for crossing detection)."""
+        for flow in self._flows:
+            flow.update_path()
     
     def _can_connect(self, source: PortItem, target: PortItem) -> bool:
         """Check if two ports can be connected."""
@@ -345,8 +441,138 @@ class FlowScene(QGraphicsScene):
                 self.clearSelection()
         elif event.key() == Qt.Key.Key_Delete:
             self.delete_selected()
+        elif event.key() == Qt.Key.Key_C and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.copy_selected()
+        elif event.key() == Qt.Key.Key_V and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.paste()
+        elif event.key() == Qt.Key.Key_Z and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                self._undo_stack.redo()
+            else:
+                self._undo_stack.undo()
+        elif event.key() == Qt.Key.Key_Y and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self._undo_stack.redo()
+        elif event.key() == Qt.Key.Key_G and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.toggle_snap()
         else:
             super().keyPressEvent(event)
+    
+    # -------------------------------------------------------------------------
+    # Copy/Paste
+    # -------------------------------------------------------------------------
+    
+    def copy_selected(self):
+        """Copy selected components to clipboard."""
+        from ..items.base_item import BaseComponentItem
+        
+        self._clipboard.clear()
+        for item in self.selectedItems():
+            if isinstance(item, BaseComponentItem):
+                self._clipboard.append({
+                    'type': item.component_type,
+                    'x': item.pos().x(),
+                    'y': item.pos().y(),
+                    'name': item.name
+                })
+    
+    def paste(self):
+        """Paste components from clipboard."""
+        if not self._clipboard:
+            return
+        
+        from .undo_commands import PasteCommand
+        offset = QPointF(20, 20)  # Offset pasted items
+        cmd = PasteCommand(self, self._clipboard, offset)
+        self._undo_stack.push(cmd)
+        
+        # Select pasted items
+        self.clearSelection()
+        for item in cmd._created_items:
+            item.setSelected(True)
+    
+    # -------------------------------------------------------------------------
+    # Context Menu
+    # -------------------------------------------------------------------------
+    
+    def contextMenuEvent(self, event):
+        """Show context menu on right-click."""
+        menu = QMenu()
+        
+        # Check if clicked on an item
+        item_at_pos = self.itemAt(event.scenePos(), QTransform())
+        
+        # Edit actions
+        undo_action = menu.addAction("Undo")
+        undo_action.setShortcut("Ctrl+Z")
+        undo_action.setEnabled(self._undo_stack.canUndo())
+        undo_action.triggered.connect(self._undo_stack.undo)
+        
+        redo_action = menu.addAction("Redo")
+        redo_action.setShortcut("Ctrl+Y")
+        redo_action.setEnabled(self._undo_stack.canRedo())
+        redo_action.triggered.connect(self._undo_stack.redo)
+        
+        menu.addSeparator()
+        
+        copy_action = menu.addAction("Copy")
+        copy_action.setShortcut("Ctrl+C")
+        copy_action.setEnabled(len(self.selectedItems()) > 0)
+        copy_action.triggered.connect(self.copy_selected)
+        
+        paste_action = menu.addAction("Paste")
+        paste_action.setShortcut("Ctrl+V")
+        paste_action.setEnabled(len(self._clipboard) > 0)
+        paste_action.triggered.connect(self.paste)
+        
+        menu.addSeparator()
+        
+        delete_action = menu.addAction("Delete")
+        delete_action.setShortcut("Del")
+        delete_action.setEnabled(len(self.selectedItems()) > 0)
+        delete_action.triggered.connect(self.delete_selected)
+        
+        menu.addSeparator()
+        
+        # Snap submenu
+        snap_menu = menu.addMenu("Snap to Grid")
+        
+        snap_toggle = snap_menu.addAction("Enabled")
+        snap_toggle.setCheckable(True)
+        snap_toggle.setChecked(self.snap_enabled)
+        snap_toggle.setShortcut("Ctrl+G")
+        snap_toggle.triggered.connect(self.toggle_snap)
+        
+        snap_menu.addSeparator()
+        
+        # Grid size submenu
+        for size in self.SNAP_SIZES:
+            size_action = snap_menu.addAction(f"Grid: {size}px")
+            size_action.setCheckable(True)
+            size_action.setChecked(self.snap_grid_size == size)
+            size_action.triggered.connect(lambda checked, s=size: self.set_snap_size(s))
+        
+        snap_menu.addSeparator()
+        
+        custom_size = snap_menu.addAction("Custom Size...")
+        custom_size.triggered.connect(self._set_custom_snap_size)
+        
+        menu.addSeparator()
+        
+        select_all = menu.addAction("Select All")
+        select_all.setShortcut("Ctrl+A")
+        select_all.triggered.connect(lambda: [item.setSelected(True) for item in self.items()])
+        
+        menu.exec(event.screenPos())
+    
+    def _set_custom_snap_size(self):
+        """Show dialog to set custom snap grid size."""
+        size, ok = QInputDialog.getInt(
+            None, "Custom Snap Size",
+            "Enter grid size (pixels):",
+            self.snap_grid_size, 1, 200
+        )
+        if ok:
+            self.set_snap_size(size)
     
     # -------------------------------------------------------------------------
     # Selection Management
@@ -358,20 +584,27 @@ class FlowScene(QGraphicsScene):
         self.selection_changed_items.emit(selected)
     
     def delete_selected(self):
-        """Delete all selected items."""
+        """Delete all selected items (with undo support as a group)."""
         from ..items.base_item import BaseComponentItem
         from ..items.flow_item import FlowItem
         
         selected = self.selectedItems()
+        if not selected:
+            return
+        
+        # Group deletions in a macro
+        self._undo_stack.beginMacro("Delete Selection")
         
         # Delete flows first, then components
         for item in selected:
-            if isinstance(item, FlowItem):
+            if isinstance(item, FlowItem) and item in self._flows:
                 self.remove_flow(item)
         
         for item in selected:
-            if isinstance(item, BaseComponentItem):
+            if isinstance(item, BaseComponentItem) and item in self._components:
                 self.remove_component(item)
+        
+        self._undo_stack.endMacro()
     
     # -------------------------------------------------------------------------
     # Properties

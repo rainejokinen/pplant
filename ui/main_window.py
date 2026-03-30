@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import (
     QMainWindow, QToolBar, QStatusBar, QLabel, QMessageBox,
-    QFileDialog, QApplication
+    QFileDialog, QApplication, QMenu, QInputDialog
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QAction, QKeySequence, QIcon
@@ -121,6 +121,32 @@ class MainWindow(QMainWindow):
         # Edit menu
         edit_menu = menubar.addMenu("&Edit")
         
+        # Undo/Redo
+        self._undo_action = QAction("&Undo", self)
+        self._undo_action.setShortcut(QKeySequence.StandardKey.Undo)
+        self._undo_action.triggered.connect(self._on_undo)
+        edit_menu.addAction(self._undo_action)
+        
+        self._redo_action = QAction("&Redo", self)
+        self._redo_action.setShortcut(QKeySequence.StandardKey.Redo)
+        self._redo_action.triggered.connect(self._on_redo)
+        edit_menu.addAction(self._redo_action)
+        
+        edit_menu.addSeparator()
+        
+        # Copy/Paste
+        copy_action = QAction("&Copy", self)
+        copy_action.setShortcut(QKeySequence.StandardKey.Copy)
+        copy_action.triggered.connect(self._on_copy)
+        edit_menu.addAction(copy_action)
+        
+        paste_action = QAction("&Paste", self)
+        paste_action.setShortcut(QKeySequence.StandardKey.Paste)
+        paste_action.triggered.connect(self._on_paste)
+        edit_menu.addAction(paste_action)
+        
+        edit_menu.addSeparator()
+        
         delete_action = QAction("&Delete", self)
         delete_action.setShortcut(QKeySequence.StandardKey.Delete)
         delete_action.triggered.connect(self._on_delete)
@@ -166,6 +192,16 @@ class MainWindow(QMainWindow):
         self._snap_action.triggered.connect(self._on_toggle_snap)
         view_menu.addAction(self._snap_action)
         
+        # Snap grid size submenu
+        snap_size_menu = view_menu.addMenu("Snap Grid Size")
+        for size in FlowScene.SNAP_SIZES:
+            action = snap_size_menu.addAction(f"{size} px")
+            action.setCheckable(True)
+            action.triggered.connect(lambda checked, s=size: self._on_set_snap_size(s))
+        snap_size_menu.addSeparator()
+        custom_snap = snap_size_menu.addAction("Custom...")
+        custom_snap.triggered.connect(self._on_custom_snap_size)
+        
         view_menu.addSeparator()
         
         # Toggle panels
@@ -198,6 +234,23 @@ class MainWindow(QMainWindow):
         toolbar.addAction("New").triggered.connect(self._on_new)
         toolbar.addAction("Open").triggered.connect(self._on_open)
         toolbar.addAction("Save").triggered.connect(self._on_save)
+        
+        toolbar.addSeparator()
+        
+        # Undo/Redo
+        self._undo_toolbar = toolbar.addAction("↶ Undo")
+        self._undo_toolbar.setToolTip("Undo (Ctrl+Z)")
+        self._undo_toolbar.triggered.connect(self._on_undo)
+        
+        self._redo_toolbar = toolbar.addAction("↷ Redo")
+        self._redo_toolbar.setToolTip("Redo (Ctrl+Y)")
+        self._redo_toolbar.triggered.connect(self._on_redo)
+        
+        toolbar.addSeparator()
+        
+        # Copy/Paste
+        toolbar.addAction("📋 Copy").triggered.connect(self._on_copy)
+        toolbar.addAction("📄 Paste").triggered.connect(self._on_paste)
         
         toolbar.addSeparator()
         
@@ -299,10 +352,40 @@ class MainWindow(QMainWindow):
         # Zoom changes
         self._view.zoom_changed.connect(self._on_zoom_changed)
         
+        # Undo stack changes
+        self._scene.undo_stack.canUndoChanged.connect(self._update_undo_actions)
+        self._scene.undo_stack.canRedoChanged.connect(self._update_undo_actions)
+        self._scene.undo_stack.cleanChanged.connect(self._update_title)
+        
         # Component added/removed
         self._scene.component_added.connect(
             lambda c: self._statusbar.showMessage(f"Added {c.component_type}", 2000)
         )
+        
+        # Initial update
+        self._update_undo_actions()
+    
+    def _update_undo_actions(self):
+        """Update undo/redo action enabled state."""
+        can_undo = self._scene.undo_stack.canUndo()
+        can_redo = self._scene.undo_stack.canRedo()
+        
+        self._undo_action.setEnabled(can_undo)
+        self._redo_action.setEnabled(can_redo)
+        self._undo_toolbar.setEnabled(can_undo)
+        self._redo_toolbar.setEnabled(can_redo)
+        
+        # Update tooltips with action names
+        undo_text = self._scene.undo_stack.undoText()
+        redo_text = self._scene.undo_stack.redoText()
+        self._undo_action.setText(f"&Undo {undo_text}" if undo_text else "&Undo")
+        self._redo_action.setText(f"&Redo {redo_text}" if redo_text else "&Redo")
+    
+    def _update_title(self):
+        """Update window title to show modified state."""
+        clean = self._scene.undo_stack.isClean()
+        modified = "" if clean else " *"
+        self.setWindowTitle(f"Power Plant Simulator{modified}")
     
     # -------------------------------------------------------------------------
     # Event Handlers
@@ -379,6 +462,40 @@ class MainWindow(QMainWindow):
         self._snap_toolbar_action.setChecked(checked)
         status = "enabled" if checked else "disabled"
         self._statusbar.showMessage(f"Snap to grid {status}", 2000)
+    
+    def _on_set_snap_size(self, size: int):
+        """Set snap grid size."""
+        self._scene.set_snap_size(size)
+        self._statusbar.showMessage(f"Snap grid size: {size}px", 2000)
+    
+    def _on_custom_snap_size(self):
+        """Show dialog for custom snap size."""
+        size, ok = QInputDialog.getInt(
+            self, "Custom Snap Size",
+            "Enter grid size (pixels):",
+            self._scene.snap_grid_size, 1, 200
+        )
+        if ok:
+            self._scene.set_snap_size(size)
+            self._statusbar.showMessage(f"Snap grid size: {size}px", 2000)
+    
+    def _on_undo(self):
+        """Undo last action."""
+        self._scene.undo_stack.undo()
+    
+    def _on_redo(self):
+        """Redo last undone action."""
+        self._scene.undo_stack.redo()
+    
+    def _on_copy(self):
+        """Copy selected items."""
+        self._scene.copy_selected()
+        count = len(self._scene._clipboard)
+        self._statusbar.showMessage(f"Copied {count} item(s)", 2000)
+    
+    def _on_paste(self):
+        """Paste items from clipboard."""
+        self._scene.paste()
     
     def _on_run_simulation(self):
         """Run simulation."""
