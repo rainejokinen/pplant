@@ -83,6 +83,7 @@ class FlowItem(QGraphicsPathItem):
     COLOR_STEAM = QColor(255, 0, 0)           # Red
     COLOR_WATER = QColor(0, 0, 255)           # Blue
     COLOR_SELECTED = QColor(255, 200, 50)     # Gold
+    LABEL_COLOR = QColor(200, 200, 200)
     
     # Arrow size
     ARROW_SIZE = 8
@@ -101,6 +102,8 @@ class FlowItem(QGraphicsPathItem):
         self._source_port = source_port
         self._target_port = target_port
         self._fluid_type = "default"  # "steam", "water", "default"
+        self._label = ""  # Custom label text
+        self._show_label = False
         
         # Manual waypoints (scene coordinates)
         self._waypoints: List[QPointF] = []
@@ -204,38 +207,139 @@ class FlowItem(QGraphicsPathItem):
         # Minimum distance to go straight out of the port before turning
         MIN_EXTEND = 30
         
-        # Get port directions (assume horizontal ports)
-        # Source port exits to the right, target port enters from the left
-        source_extend = QPointF(start.x() + MIN_EXTEND, start.y())
-        target_extend = QPointF(end.x() - MIN_EXTEND, end.y())
+        # Get actual port exit directions
+        source_dir = self._source_port.get_exit_direction()
+        target_dir = self._target_port.get_exit_direction()
         
-        # If target is to the left of source, we need special routing
-        if dx < MIN_EXTEND * 2:
-            # Route: right, down/up, left, down/up, right
+        # Calculate the extension points based on port directions
+        source_extend = QPointF(
+            start.x() + source_dir.x() * MIN_EXTEND,
+            start.y() + source_dir.y() * MIN_EXTEND
+        )
+        target_extend = QPointF(
+            end.x() + target_dir.x() * MIN_EXTEND,
+            end.y() + target_dir.y() * MIN_EXTEND
+        )
+        
+        # Route based on source and target directions
+        src_horizontal = abs(source_dir.x()) > 0.5
+        tgt_horizontal = abs(target_dir.x()) > 0.5
+        
+        if src_horizontal and tgt_horizontal:
+            # Both horizontal ports (most common case)
+            return self._route_horizontal_to_horizontal(start, end, source_extend, target_extend, MIN_EXTEND)
+        elif not src_horizontal and not tgt_horizontal:
+            # Both vertical ports
+            return self._route_vertical_to_vertical(start, end, source_extend, target_extend, MIN_EXTEND)
+        else:
+            # Mixed: one horizontal, one vertical
+            return self._route_mixed_directions(start, end, source_extend, target_extend, src_horizontal)
+    
+    def _route_horizontal_to_horizontal(self, start: QPointF, end: QPointF, 
+                                         source_extend: QPointF, target_extend: QPointF,
+                                         min_extend: float) -> List[QPointF]:
+        """Route from horizontal port to horizontal port."""
+        points = [start]
+        dx = end.x() - start.x()
+        dy = end.y() - start.y()
+        
+        # Determine if we need complex routing
+        source_going_right = source_extend.x() > start.x()
+        target_coming_from_left = target_extend.x() < end.x()
+        
+        if source_going_right and target_coming_from_left:
+            if dx >= min_extend * 2:
+                # Direct routing with single bend
+                mid_x = (start.x() + end.x()) / 2
+                mid_x = max(mid_x, source_extend.x())
+                mid_x = min(mid_x, target_extend.x())
+                points.append(QPointF(mid_x, start.y()))
+                points.append(QPointF(mid_x, end.y()))
+            else:
+                # Need to route around
+                mid_y = (start.y() + end.y()) / 2
+                if abs(dy) < min_extend:
+                    mid_y = start.y() + (60 if dy >= 0 else -60)
+                points.append(source_extend)
+                points.append(QPointF(source_extend.x(), mid_y))
+                points.append(QPointF(target_extend.x(), mid_y))
+                points.append(target_extend)
+        else:
+            # Complex case: ports facing away or towards each other
             mid_y = (start.y() + end.y()) / 2
-            if abs(dy) < MIN_EXTEND:
-                # Components on same level, route around
+            if abs(dy) < min_extend:
                 mid_y = start.y() + (60 if dy >= 0 else -60)
-            
             points.append(source_extend)
             points.append(QPointF(source_extend.x(), mid_y))
             points.append(QPointF(target_extend.x(), mid_y))
             points.append(target_extend)
-            points.append(end)
-        else:
-            # Standard routing: right from source, vertical, left to target
-            mid_x = start.x() + dx / 2
-            
-            # Ensure we go straight out first
-            if mid_x < source_extend.x():
-                mid_x = source_extend.x()
-            if mid_x > target_extend.x():
-                mid_x = target_extend.x()
-            
-            points.append(QPointF(mid_x, start.y()))
-            points.append(QPointF(mid_x, end.y()))
-            points.append(end)
         
+        points.append(end)
+        return points
+    
+    def _route_vertical_to_vertical(self, start: QPointF, end: QPointF,
+                                     source_extend: QPointF, target_extend: QPointF,
+                                     min_extend: float) -> List[QPointF]:
+        """Route from vertical port to vertical port."""
+        points = [start]
+        dx = end.x() - start.x()
+        dy = end.y() - start.y()
+        
+        source_going_down = source_extend.y() > start.y()
+        target_coming_from_top = target_extend.y() < end.y()
+        
+        if source_going_down and target_coming_from_top:
+            if dy >= min_extend * 2:
+                # Direct vertical routing
+                mid_y = (start.y() + end.y()) / 2
+                mid_y = max(mid_y, source_extend.y())
+                mid_y = min(mid_y, target_extend.y())
+                points.append(QPointF(start.x(), mid_y))
+                points.append(QPointF(end.x(), mid_y))
+            else:
+                # Need to route around
+                mid_x = (start.x() + end.x()) / 2
+                if abs(dx) < min_extend:
+                    mid_x = start.x() + (60 if dx >= 0 else -60)
+                points.append(source_extend)
+                points.append(QPointF(mid_x, source_extend.y()))
+                points.append(QPointF(mid_x, target_extend.y()))
+                points.append(target_extend)
+        else:
+            # Complex case
+            mid_x = (start.x() + end.x()) / 2
+            if abs(dx) < min_extend:
+                mid_x = start.x() + (60 if dx >= 0 else -60)
+            points.append(source_extend)
+            points.append(QPointF(mid_x, source_extend.y()))
+            points.append(QPointF(mid_x, target_extend.y()))
+            points.append(target_extend)
+        
+        points.append(end)
+        return points
+    
+    def _route_mixed_directions(self, start: QPointF, end: QPointF,
+                                 source_extend: QPointF, target_extend: QPointF,
+                                 src_horizontal: bool) -> List[QPointF]:
+        """Route from horizontal port to vertical port or vice versa."""
+        points = [start]
+        
+        if src_horizontal:
+            # Source is horizontal, target is vertical
+            # Go out horizontally from source, then connect to target's vertical extension
+            points.append(source_extend)
+            # Route to align with target
+            points.append(QPointF(target_extend.x(), source_extend.y()))
+            points.append(target_extend)
+        else:
+            # Source is vertical, target is horizontal
+            # Go out vertically from source, then connect to target's horizontal extension
+            points.append(source_extend)
+            # Route to align with target
+            points.append(QPointF(source_extend.x(), target_extend.y()))
+            points.append(target_extend)
+        
+        points.append(end)
         return points
     
     def _create_waypoint_points(self, start: QPointF, end: QPointF) -> List[QPointF]:
@@ -381,6 +485,35 @@ class FlowItem(QGraphicsPathItem):
         self._update_pen()
         super().paint(painter, option, widget)
         self._draw_arrow(painter)
+        self._draw_label(painter)
+    
+    def _draw_label(self, painter: QPainter):
+        """Draw flow label at path midpoint."""
+        if not self._show_label or not self._label:
+            return
+        
+        from PyQt6.QtGui import QFont, QFontMetrics
+        
+        path = self.path()
+        if path.isEmpty():
+            return
+        
+        # Position at 50% along path
+        point = path.pointAtPercent(0.5)
+        
+        font = QFont()
+        font.setPointSize(9)
+        painter.setFont(font)
+        painter.setPen(self.LABEL_COLOR)
+        
+        fm = QFontMetrics(font)
+        text_width = fm.horizontalAdvance(self._label)
+        
+        # Draw label offset above the line
+        x = int(point.x() - text_width / 2)
+        y = int(point.y() - 10)
+        
+        painter.drawText(x, y, self._label)
     
     def _draw_arrow(self, painter: QPainter):
         """Draw flow direction arrow at path midpoint."""
@@ -430,6 +563,93 @@ class FlowItem(QGraphicsPathItem):
                 handle.setVisible(value)
         return super().itemChange(change, value)
     
+    def contextMenuEvent(self, event):
+        """Show context menu for flow line."""
+        from PyQt6.QtWidgets import QInputDialog
+        
+        menu = QMenu()
+        
+        # Waypoint actions
+        add_waypoint = menu.addAction("Add Waypoint Here")
+        add_waypoint.triggered.connect(lambda: self.add_waypoint(event.scenePos()))
+        
+        if self._waypoints:
+            clear_waypoints = menu.addAction("Clear All Waypoints")
+            clear_waypoints.triggered.connect(self._clear_all_waypoints)
+        
+        menu.addSeparator()
+        
+        # Label options
+        label_menu = menu.addMenu("Label")
+        
+        show_label = label_menu.addAction("Show Label")
+        show_label.setCheckable(True)
+        show_label.setChecked(self._show_label)
+        show_label.triggered.connect(self._toggle_label)
+        
+        set_label = label_menu.addAction("Set Label Text...")
+        set_label.triggered.connect(self._prompt_set_label)
+        
+        menu.addSeparator()
+        
+        # Fluid type submenu
+        fluid_menu = menu.addMenu("Fluid Type")
+        
+        fluid_default = fluid_menu.addAction("Default (Blue)")
+        fluid_default.setCheckable(True)
+        fluid_default.setChecked(self._fluid_type == "default")
+        fluid_default.triggered.connect(lambda: self._set_fluid_type("default"))
+        
+        fluid_water = fluid_menu.addAction("Water (Blue)")
+        fluid_water.setCheckable(True)
+        fluid_water.setChecked(self._fluid_type == "water")
+        fluid_water.triggered.connect(lambda: self._set_fluid_type("water"))
+        
+        fluid_steam = fluid_menu.addAction("Steam (Red)")
+        fluid_steam.setCheckable(True)
+        fluid_steam.setChecked(self._fluid_type == "steam")
+        fluid_steam.triggered.connect(lambda: self._set_fluid_type("steam"))
+        
+        menu.addSeparator()
+        
+        # Delete action
+        delete_action = menu.addAction("Delete Flow")
+        delete_action.triggered.connect(self._on_delete)
+        
+        menu.exec(event.screenPos())
+    
+    def _toggle_label(self):
+        """Toggle label visibility."""
+        self._show_label = not self._show_label
+        self.update()
+    
+    def _prompt_set_label(self):
+        """Prompt user to set label text."""
+        from PyQt6.QtWidgets import QInputDialog
+        text, ok = QInputDialog.getText(None, "Flow Label", "Label text:", text=self._label)
+        if ok:
+            self._label = text
+            if text:
+                self._show_label = True
+            self.update()
+    
+    def _clear_all_waypoints(self):
+        """Remove all waypoints."""
+        self._waypoints.clear()
+        self.update_path()
+    
+    def _set_fluid_type(self, fluid_type: str):
+        """Set the fluid type."""
+        self._fluid_type = fluid_type
+        self._update_pen()
+        self.update()
+    
+    def _on_delete(self):
+        """Delete this flow."""
+        scene = self.scene()
+        if scene and hasattr(scene, 'remove_flow'):
+            scene.remove_flow(self)
+    
     @property
     def source_port(self) -> PortItem:
         return self._source_port
@@ -449,21 +669,26 @@ class FlowItem(QGraphicsPathItem):
         self.update()
     
     @property
+    def label(self) -> str:
+        return self._label
+    
+    @label.setter
+    def label(self, value: str):
+        self._label = value
+        self.update()
+    
+    @property
+    def show_label(self) -> bool:
+        return self._show_label
+    
+    @show_label.setter
+    def show_label(self, value: bool):
+        self._show_label = value
+        self.update()
+    
+    @property
     def waypoints(self) -> List[QPointF]:
         return self._waypoints.copy()
-    
-    def is_connected_to(self, component: BaseComponentItem) -> bool:
-        source_comp = self._source_port.parent_component
-        target_comp = self._target_port.parent_component
-        return component is source_comp or component is target_comp
-    
-    @property
-    def source_component(self) -> Optional[BaseComponentItem]:
-        return self._source_port.parent_component if self._source_port else None
-    
-    @property
-    def target_component(self) -> Optional[BaseComponentItem]:
-        return self._target_port.parent_component if self._target_port else None
     
     def is_connected_to(self, component: BaseComponentItem) -> bool:
         """Check if this flow connects to the given component."""

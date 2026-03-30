@@ -30,9 +30,9 @@ class FlowView(QGraphicsView):
     ZOOM_MAX = 5.0
     ZOOM_STEP = 1.15  # 15% per wheel notch
     
-    # Grid configuration
-    GRID_SIZE_MINOR = 20
-    GRID_SIZE_MAJOR = 100
+    # Grid configuration (defaults, can be overridden by scene.snap_grid_size)
+    GRID_SIZE_MINOR_DEFAULT = 20
+    GRID_SIZE_MAJOR_DEFAULT = 100
     GRID_COLOR_MINOR = QColor(50, 55, 65)
     GRID_COLOR_MAJOR = QColor(60, 65, 75)
     BACKGROUND_COLOR = QColor(30, 35, 45)
@@ -45,6 +45,28 @@ class FlowView(QGraphicsView):
         self._pan_start = QPointF()
         
         self._setup_view()
+        
+        # Connect to scene's snap size changes
+        if scene and hasattr(scene, 'snap_size_changed'):
+            scene.snap_size_changed.connect(self._on_snap_size_changed)
+    
+    def _on_snap_size_changed(self, size: int):
+        """Handle snap size change from scene."""
+        self.resetCachedContent()
+        self.viewport().update()
+    
+    @property
+    def grid_size_minor(self) -> int:
+        """Get minor grid size (from scene or default)."""
+        scene = self.scene()
+        if scene and hasattr(scene, 'snap_grid_size'):
+            return scene.snap_grid_size
+        return self.GRID_SIZE_MINOR_DEFAULT
+    
+    @property
+    def grid_size_major(self) -> int:
+        """Get major grid size (5x minor)."""
+        return self.grid_size_minor * 5
     
     def _setup_view(self):
         """Configure view settings."""
@@ -75,40 +97,43 @@ class FlowView(QGraphicsView):
         """Draw grid background."""
         super().drawBackground(painter, rect)
         
+        minor = self.grid_size_minor
+        major = self.grid_size_major
+        
         # Calculate visible grid area
-        left = int(rect.left()) - (int(rect.left()) % self.GRID_SIZE_MINOR)
-        top = int(rect.top()) - (int(rect.top()) % self.GRID_SIZE_MINOR)
+        left = int(rect.left()) - (int(rect.left()) % minor)
+        top = int(rect.top()) - (int(rect.top()) % minor)
         
         # Draw minor grid lines
         painter.setPen(QPen(self.GRID_COLOR_MINOR, 0.5))
         
         x = left
         while x < rect.right():
-            if x % self.GRID_SIZE_MAJOR != 0:  # Skip major lines
+            if x % major != 0:  # Skip major lines
                 painter.drawLine(int(x), int(rect.top()), int(x), int(rect.bottom()))
-            x += self.GRID_SIZE_MINOR
+            x += minor
         
         y = top
         while y < rect.bottom():
-            if y % self.GRID_SIZE_MAJOR != 0:
+            if y % major != 0:
                 painter.drawLine(int(rect.left()), int(y), int(rect.right()), int(y))
-            y += self.GRID_SIZE_MINOR
+            y += minor
         
         # Draw major grid lines
         painter.setPen(QPen(self.GRID_COLOR_MAJOR, 1.0))
         
-        left_major = int(rect.left()) - (int(rect.left()) % self.GRID_SIZE_MAJOR)
-        top_major = int(rect.top()) - (int(rect.top()) % self.GRID_SIZE_MAJOR)
+        left_major = int(rect.left()) - (int(rect.left()) % major)
+        top_major = int(rect.top()) - (int(rect.top()) % major)
         
         x = left_major
         while x < rect.right():
             painter.drawLine(int(x), int(rect.top()), int(x), int(rect.bottom()))
-            x += self.GRID_SIZE_MAJOR
+            x += major
         
         y = top_major
         while y < rect.bottom():
             painter.drawLine(int(rect.left()), int(y), int(rect.right()), int(y))
-            y += self.GRID_SIZE_MAJOR
+            y += major
     
     def wheelEvent(self, event: QWheelEvent):
         """Handle mouse wheel zoom."""

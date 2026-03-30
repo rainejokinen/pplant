@@ -495,11 +495,27 @@ class FlowScene(QGraphicsScene):
     # -------------------------------------------------------------------------
     
     def contextMenuEvent(self, event):
-        """Show context menu on right-click."""
-        menu = QMenu()
-        
-        # Check if clicked on an item
+        """Show context menu on right-click (only for empty canvas)."""
+        # Check if clicked on an item - let items handle their own context menus
         item_at_pos = self.itemAt(event.scenePos(), QTransform())
+        
+        # Skip port items and let parent handle, but otherwise let items handle menus
+        if item_at_pos is not None:
+            from ..items.port_item import PortItem
+            from ..items.flow_item import FlowItem, WaypointHandle
+            from ..items.base_item import BaseComponentItem, ResizeHandle
+            
+            # Let components, flows, and waypoints handle their own menus
+            if isinstance(item_at_pos, (BaseComponentItem, FlowItem, WaypointHandle)):
+                super().contextMenuEvent(event)
+                return
+            # For ports and resize handles, check parent
+            if isinstance(item_at_pos, (PortItem, ResizeHandle)):
+                super().contextMenuEvent(event)
+                return
+        
+        # Canvas (empty space) context menu
+        menu = QMenu()
         
         # Edit actions
         undo_action = menu.addAction("Undo")

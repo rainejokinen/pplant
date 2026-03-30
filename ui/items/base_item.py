@@ -100,6 +100,8 @@ class BaseComponentItem(QGraphicsObject):
     # Style constants
     SELECTION_COLOR = QColor(255, 200, 50, 180)  # Gold glow
     SELECTION_WIDTH = 4
+    LABEL_COLOR = QColor(200, 200, 200)
+    LABEL_FONT_SIZE = 9
     
     # Transform defaults
     DEFAULT_SCALE = 1.0
@@ -126,6 +128,9 @@ class BaseComponentItem(QGraphicsObject):
         self._flip_h = False       # horizontal flip
         self._flip_v = False       # vertical flip
         self._scale_factor = self.DEFAULT_SCALE
+        
+        # Label visibility
+        self._show_label = False
         
         self._setup_item()
         self._create_ports()
@@ -260,6 +265,47 @@ class BaseComponentItem(QGraphicsObject):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPath(path)
     
+    def paint_label(self, painter: QPainter):
+        """
+        Paint the component name label below the item.
+        
+        Call this from paint() if label should be shown.
+        """
+        if not self._show_label or not self._name:
+            return
+        
+        from PyQt6.QtGui import QFont, QFontMetrics
+        
+        font = QFont()
+        font.setPointSize(self.LABEL_FONT_SIZE)
+        painter.setFont(font)
+        painter.setPen(self.LABEL_COLOR)
+        
+        # Position label below the bounding rect
+        rect = self.boundingRect()
+        fm = QFontMetrics(font)
+        text_width = fm.horizontalAdvance(self._name)
+        
+        # Center horizontally, position below
+        x = rect.center().x() - text_width / 2
+        y = rect.bottom() + fm.height()
+        
+        painter.drawText(int(x), int(y), self._name)
+    
+    @property
+    def show_label(self) -> bool:
+        """Whether to show the component name label."""
+        return self._show_label
+    
+    @show_label.setter
+    def show_label(self, value: bool):
+        self._show_label = value
+        self.update()
+    
+    def toggle_label(self):
+        """Toggle label visibility."""
+        self.show_label = not self._show_label
+    
     # -------------------------------------------------------------------------
     # Event Handling
     # -------------------------------------------------------------------------
@@ -294,6 +340,29 @@ class BaseComponentItem(QGraphicsObject):
         for port in self.all_ports:
             if port.connected_flow:
                 port.connected_flow.update_path()
+    
+    def mousePressEvent(self, event):
+        """Track position for undo on drag start."""
+        from PyQt6.QtCore import Qt
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start_pos = self.pos()
+        super().mousePressEvent(event)
+    
+    def mouseReleaseEvent(self, event):
+        """Create undo command if position changed on drag end."""
+        from PyQt6.QtCore import Qt
+        if event.button() == Qt.MouseButton.LeftButton:
+            if hasattr(self, '_drag_start_pos') and self._drag_start_pos is not None:
+                new_pos = self.pos()
+                if self._drag_start_pos != new_pos:
+                    # Create undo command
+                    scene = self.scene()
+                    if scene and hasattr(scene, 'undo_stack'):
+                        from ..canvas.undo_commands import MoveComponentCommand
+                        cmd = MoveComponentCommand(self, self._drag_start_pos, new_pos)
+                        scene.undo_stack.push(cmd)
+                self._drag_start_pos = None
+        super().mouseReleaseEvent(event)
     
     def contextMenuEvent(self, event):
         """Show context menu."""
@@ -332,6 +401,14 @@ class BaseComponentItem(QGraphicsObject):
         
         reset_transform = transform_menu.addAction("Reset Transform")
         reset_transform.triggered.connect(self.reset_transform)
+        
+        menu.addSeparator()
+        
+        # Label toggle
+        label_action = menu.addAction("Show Label")
+        label_action.setCheckable(True)
+        label_action.setChecked(self._show_label)
+        label_action.triggered.connect(self.toggle_label)
         
         menu.addSeparator()
         
@@ -405,45 +482,72 @@ class BaseComponentItem(QGraphicsObject):
         self._update_connected_flows()
         self.update()
     
+    def _push_transform_command(self, transform_type: str,
+                                 old_rot: int, old_flip_h: bool, old_flip_v: bool, old_scale: float,
+                                 new_rot: int, new_flip_h: bool, new_flip_v: bool, new_scale: float):
+        """Push a transform command to the undo stack (command's redo applies transform)."""
+        scene = self.scene()
+        if scene and hasattr(scene, 'undo_stack'):
+            from ..canvas.undo_commands import TransformCommand
+            cmd = TransformCommand(
+                self, transform_type,
+                old_rot, old_flip_h, old_flip_v, old_scale,
+                new_rot, new_flip_h, new_flip_v, new_scale
+            )
+            scene.undo_stack.push(cmd)  # This calls redo() which applies
+        else:
+            # No undo stack - apply directly
+            self._rotation_angle = new_rot
+            self._flip_h = new_flip_h
+            self._flip_v = new_flip_v
+            self._scale_factor = new_scale
+            self._apply_transform()
+    
     def rotate_cw(self):
         """Rotate 90 degrees clockwise."""
-        self._rotation_angle = (self._rotation_angle + 90) % 360
-        self._apply_transform()
+        old = (self._rotation_angle, self._flip_h, self._flip_v, self._scale_factor)
+        new = ((self._rotation_angle + 90) % 360, self._flip_h, self._flip_v, self._scale_factor)
+        self._push_transform_command("Rotate CW", *old, *new)
     
     def rotate_ccw(self):
         """Rotate 90 degrees counter-clockwise."""
-        self._rotation_angle = (self._rotation_angle - 90) % 360
-        self._apply_transform()
+        old = (self._rotation_angle, self._flip_h, self._flip_v, self._scale_factor)
+        new = ((self._rotation_angle - 90) % 360, self._flip_h, self._flip_v, self._scale_factor)
+        self._push_transform_command("Rotate CCW", *old, *new)
     
     def flip_horizontal(self):
         """Toggle horizontal flip."""
-        self._flip_h = not self._flip_h
-        self._apply_transform()
+        old = (self._rotation_angle, self._flip_h, self._flip_v, self._scale_factor)
+        new = (self._rotation_angle, not self._flip_h, self._flip_v, self._scale_factor)
+        self._push_transform_command("Flip H", *old, *new)
     
     def flip_vertical(self):
         """Toggle vertical flip."""
-        self._flip_v = not self._flip_v
-        self._apply_transform()
+        old = (self._rotation_angle, self._flip_h, self._flip_v, self._scale_factor)
+        new = (self._rotation_angle, self._flip_h, not self._flip_v, self._scale_factor)
+        self._push_transform_command("Flip V", *old, *new)
     
     def scale_up(self):
         """Increase scale by one step."""
         if self._scale_factor < self.MAX_SCALE:
-            self._scale_factor = min(self._scale_factor + self.SCALE_STEP, self.MAX_SCALE)
-            self._apply_transform()
+            old = (self._rotation_angle, self._flip_h, self._flip_v, self._scale_factor)
+            new_scale = min(self._scale_factor + self.SCALE_STEP, self.MAX_SCALE)
+            new = (self._rotation_angle, self._flip_h, self._flip_v, new_scale)
+            self._push_transform_command("Scale Up", *old, *new)
     
     def scale_down(self):
         """Decrease scale by one step."""
         if self._scale_factor > self.MIN_SCALE:
-            self._scale_factor = max(self._scale_factor - self.SCALE_STEP, self.MIN_SCALE)
-            self._apply_transform()
+            old = (self._rotation_angle, self._flip_h, self._flip_v, self._scale_factor)
+            new_scale = max(self._scale_factor - self.SCALE_STEP, self.MIN_SCALE)
+            new = (self._rotation_angle, self._flip_h, self._flip_v, new_scale)
+            self._push_transform_command("Scale Down", *old, *new)
     
     def reset_transform(self):
         """Reset all transforms to defaults."""
-        self._rotation_angle = 0
-        self._flip_h = False
-        self._flip_v = False
-        self._scale_factor = self.DEFAULT_SCALE
-        self._apply_transform()
+        old = (self._rotation_angle, self._flip_h, self._flip_v, self._scale_factor)
+        new = (0, False, False, self.DEFAULT_SCALE)
+        self._push_transform_command("Reset Transform", *old, *new)
     
     @property
     def rotation_angle(self) -> int:

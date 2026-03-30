@@ -167,3 +167,35 @@ class PasteCommand(QUndoCommand):
     def undo(self):
         for item in self._created_items:
             self._scene._remove_component_internal(item)
+
+
+class TransformCommand(QUndoCommand):
+    """Command for component transforms (rotate, flip, scale)."""
+    
+    def __init__(self, item: BaseComponentItem, transform_type: str,
+                 old_rotation: int, old_flip_h: bool, old_flip_v: bool, old_scale: float,
+                 new_rotation: int, new_flip_h: bool, new_flip_v: bool, new_scale: float):
+        super().__init__(f"{transform_type} {item.component_type}")
+        self._item = item
+        self._old_rotation = old_rotation
+        self._old_flip_h = old_flip_h
+        self._old_flip_v = old_flip_v
+        self._old_scale = old_scale
+        self._new_rotation = new_rotation
+        self._new_flip_h = new_flip_h
+        self._new_flip_v = new_flip_v
+        self._new_scale = new_scale
+    
+    def redo(self):
+        self._item._rotation_angle = self._new_rotation
+        self._item._flip_h = self._new_flip_h
+        self._item._flip_v = self._new_flip_v
+        self._item._scale_factor = self._new_scale
+        self._item._apply_transform()
+    
+    def undo(self):
+        self._item._rotation_angle = self._old_rotation
+        self._item._flip_h = self._old_flip_h
+        self._item._flip_v = self._old_flip_v
+        self._item._scale_factor = self._old_scale
+        self._item._apply_transform()

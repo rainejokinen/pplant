@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import QGraphicsItem, QStyleOptionGraphicsItem, QWidget
 from PyQt6.QtCore import Qt, QRectF, QPointF
 from PyQt6.QtGui import (
     QPainter, QPen, QColor, QBrush, QPainterPath,
-    QLinearGradient
+    QPolygonF
 )
 
 from .base_item import BaseComponentItem
@@ -19,36 +19,41 @@ class MixerItem(BaseComponentItem):
     """
     Flow mixer graphics item.
     
-    Visual: Y-junction or circle with converging arrows
+    Visual: Y-junction with two inlet arrows converging into one outlet
     Ports:
         - 2 inputs: inlet_1 (top-left), inlet_2 (bottom-left)
         - 1 output: outlet (right)
     """
     
     # Dimensions
-    RADIUS = 20
+    WIDTH = 50
+    HEIGHT = 40
+    ARROW_HEAD = 12
     
     # Colors
     COLOR_BODY = QColor(100, 140, 180)
-    COLOR_BORDER = QColor(140, 180, 220)
+    COLOR_BORDER = QColor(70, 110, 150)
     
     def __init__(self, name: str = "", parent: Optional[QGraphicsItem] = None):
         super().__init__(name=name, parent=parent)
     
     def _create_ports(self):
         """Create mixer ports: 2 in, 1 out."""
+        half_w = self.WIDTH / 2
+        half_h = self.HEIGHT / 2
+        
         self.add_input_port(
-            QPointF(-self.RADIUS, -self.RADIUS * 0.7),
+            QPointF(-half_w, -half_h * 0.6),
             name="inlet_1",
             is_mandatory=True
         )
         self.add_input_port(
-            QPointF(-self.RADIUS, self.RADIUS * 0.7),
+            QPointF(-half_w, half_h * 0.6),
             name="inlet_2",
             is_mandatory=True
         )
         self.add_output_port(
-            QPointF(self.RADIUS, 0),
+            QPointF(half_w, 0),
             name="outlet",
             is_mandatory=True
         )
@@ -56,37 +61,62 @@ class MixerItem(BaseComponentItem):
     def boundingRect(self) -> QRectF:
         margin = 5
         return QRectF(
-            -self.RADIUS - margin,
-            -self.RADIUS - margin,
-            2 * self.RADIUS + 2 * margin,
-            2 * self.RADIUS + 2 * margin
+            -self.WIDTH / 2 - margin,
+            -self.HEIGHT / 2 - margin,
+            self.WIDTH + 2 * margin,
+            self.HEIGHT + 2 * margin
         )
     
     def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: Optional[QWidget] = None):
-        """Paint mixer symbol."""
-        # Circle body
-        gradient = QLinearGradient(-self.RADIUS, -self.RADIUS, self.RADIUS, self.RADIUS)
-        gradient.setColorAt(0, self.COLOR_BODY.lighter(120))
-        gradient.setColorAt(1, self.COLOR_BODY)
+        """Paint mixer symbol - Y junction with converging arrows."""
+        half_w = self.WIDTH / 2
+        half_h = self.HEIGHT / 2
         
-        painter.setBrush(QBrush(gradient))
         painter.setPen(QPen(self.COLOR_BORDER, 2))
-        painter.drawEllipse(QPointF(0, 0), self.RADIUS, self.RADIUS)
+        painter.setBrush(QBrush(self.COLOR_BODY))
         
-        # Draw converging arrows inside
-        painter.setPen(QPen(Qt.GlobalColor.white, 2))
-        # Top arrow
-        painter.drawLine(-8, -8, 0, 0)
-        # Bottom arrow
-        painter.drawLine(-8, 8, 0, 0)
-        # Output arrow
-        painter.drawLine(0, 0, 10, 0)
+        # Draw Y-junction shape as polygon
+        # Two inlet arrows on left converging to a single outlet on right
+        path = QPainterPath()
         
-        # Arrow head
-        painter.drawLine(6, -4, 10, 0)
-        painter.drawLine(6, 4, 10, 0)
+        # Top inlet branch (arrow shape)
+        path.moveTo(-half_w, -half_h * 0.6 - 5)  # Top of top arrow
+        path.lineTo(-half_w + self.ARROW_HEAD, -half_h * 0.6)  # Arrow tip
+        path.lineTo(-half_w, -half_h * 0.6 + 5)  # Bottom of top arrow
+        path.lineTo(-half_w, -half_h * 0.6 - 5)
+        
+        # Bottom inlet branch (arrow shape)
+        path.moveTo(-half_w, half_h * 0.6 - 5)  # Top of bottom arrow
+        path.lineTo(-half_w + self.ARROW_HEAD, half_h * 0.6)  # Arrow tip
+        path.lineTo(-half_w, half_h * 0.6 + 5)  # Bottom of bottom arrow
+        path.lineTo(-half_w, half_h * 0.6 - 5)
+        
+        painter.drawPath(path)
+        
+        # Draw the joining lines from arrow tips to center and out
+        painter.setPen(QPen(self.COLOR_BORDER, 3))
+        
+        # Top inlet line to center
+        painter.drawLine(
+            QPointF(-half_w + self.ARROW_HEAD, -half_h * 0.6),
+            QPointF(0, 0)
+        )
+        
+        # Bottom inlet line to center
+        painter.drawLine(
+            QPointF(-half_w + self.ARROW_HEAD, half_h * 0.6),
+            QPointF(0, 0)
+        )
+        
+        # Center to outlet
+        painter.drawLine(QPointF(0, 0), QPointF(half_w, 0))
+        
+        # Draw center junction circle
+        painter.setPen(QPen(self.COLOR_BORDER, 2))
+        painter.setBrush(QBrush(self.COLOR_BODY.lighter(110)))
+        painter.drawEllipse(QPointF(0, 0), 6, 6)
         
         # Selection highlight
         path = QPainterPath()
-        path.addEllipse(QPointF(0, 0), self.RADIUS, self.RADIUS)
+        path.addRect(self.boundingRect().adjusted(3, 3, -3, -3))
         self.paint_selection_highlight(painter, path)

@@ -125,6 +125,32 @@ class PortItem(QGraphicsEllipseItem):
             return parent
         return None
     
+    def get_exit_direction(self) -> QPointF:
+        """
+        Get the unit vector direction that a flow line should extend when leaving this port.
+        
+        Based on port's position relative to component center:
+        - Left side port → exit left (-1, 0)
+        - Right side port → exit right (1, 0)  
+        - Top side port → exit up (0, -1)
+        - Bottom side port → exit down (0, 1)
+        
+        Returns:
+            QPointF representing the exit direction as a unit vector
+        """
+        local_pos = self.pos()  # Position relative to parent component
+        
+        # Determine which edge the port is on based on which coordinate is dominant
+        x, y = local_pos.x(), local_pos.y()
+        
+        # Compare absolute values to determine if port is more horizontal or vertical
+        if abs(x) > abs(y):
+            # Port is on left or right edge
+            return QPointF(1, 0) if x > 0 else QPointF(-1, 0)
+        else:
+            # Port is on top or bottom edge
+            return QPointF(0, 1) if y > 0 else QPointF(0, -1)
+    
     # -------------------------------------------------------------------------
     # Event Handling
     # -------------------------------------------------------------------------
