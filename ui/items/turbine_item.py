@@ -29,9 +29,9 @@ class TurbineItem(BaseComponentItem):
         - 3 outputs: main_outlet (right), extraction_1 (bottom), extraction_2 (bottom)
     """
     
-    # Dimensions
-    WIDTH = 70
-    HEIGHT = 50
+    # Dimensions (shorter for single stage)
+    WIDTH = 45
+    HEIGHT = 40
     
     # VWO style: narrow inlet, wide outlet
     INLET_HEIGHT_RATIO = 0.4   # Narrow on left
@@ -113,23 +113,16 @@ class TurbineItem(BaseComponentItem):
         painter.setPen(QPen(pen_color, pen_width))
         painter.drawPath(path)
         
-        # Draw internal stage lines (VWO-style)
+        # Draw internal stage lines (VWO-style) - fewer lines for shorter turbine
         painter.setPen(QPen(self.COLOR_OUTLINE, 1))
-        for i in range(1, 4):
-            x = -self.WIDTH / 2 + (self.WIDTH * i / 4)
+        for i in range(1, 3):  # Fewer stage lines
+            x = -self.WIDTH / 2 + (self.WIDTH * i / 3)
             # Linear interpolation of y limits
-            t = i / 4
+            t = i / 3
             y_top = -inlet_half + t * (-outlet_half - (-inlet_half))
             y_bottom = inlet_half + t * (outlet_half - inlet_half)
             painter.drawLine(int(x), int(y_top), int(x), int(y_bottom))
         
-        # Draw label above
-        if self._name:
-            painter.setPen(self.COLOR_OUTLINE)
-            painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
-            painter.drawText(
-                QRectF(-self.WIDTH/2, -self.HEIGHT/2 - 18, self.WIDTH, 14),
-                Qt.AlignmentFlag.AlignCenter, 
-                self._name
-            )
+        # Draw label if enabled
+        self.paint_label(painter)
 

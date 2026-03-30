@@ -144,27 +144,53 @@ class RemoveFlowCommand(QUndoCommand):
 
 
 class PasteCommand(QUndoCommand):
-    """Command to paste components."""
+    """Command to paste components and their flows."""
     
-    def __init__(self, scene: FlowScene, items_data: List[Dict[str, Any]], offset: QPointF):
+    def __init__(self, scene: FlowScene, items_data: List[Dict[str, Any]], 
+                 flows_data: List[Dict[str, Any]], offset: QPointF):
         super().__init__("Paste")
         self._scene = scene
         self._items_data = items_data
+        self._flows_data = flows_data
         self._offset = offset
         self._created_items: List[BaseComponentItem] = []
+        self._created_flows: List[FlowItem] = []
     
     def redo(self):
         if not self._created_items:
+            # Create components
             for data in self._items_data:
                 pos = QPointF(data['x'] + self._offset.x(), data['y'] + self._offset.y())
                 item = self._scene._create_component_internal(data['type'], pos, "")
                 if item:
                     self._created_items.append(item)
+            
+            # Create flows between pasted components
+            for flow_data in self._flows_data:
+                source_idx = flow_data['source_idx']
+                target_idx = flow_data['target_idx']
+                
+                if source_idx < len(self._created_items) and target_idx < len(self._created_items):
+                    source_comp = self._created_items[source_idx]
+                    target_comp = self._created_items[target_idx]
+                    
+                    source_port = source_comp.get_port_by_name(flow_data['source_port'])
+                    target_port = target_comp.get_port_by_name(flow_data['target_port'])
+                    
+                    if source_port and target_port and not source_port.is_connected and not target_port.is_connected:
+                        flow = self._scene._create_flow_internal(source_port, target_port)
+                        if flow:
+                            self._created_flows.append(flow)
         else:
+            # Restore items
             for item in self._created_items:
                 self._scene._restore_component(item)
+            for flow in self._created_flows:
+                self._scene._restore_flow(flow)
     
     def undo(self):
+        for flow in self._created_flows:
+            self._scene._remove_flow_internal(flow)
         for item in self._created_items:
             self._scene._remove_component_internal(item)
 

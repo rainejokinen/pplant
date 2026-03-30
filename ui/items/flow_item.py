@@ -19,6 +19,7 @@ from PyQt6.QtGui import QPainter, QPen, QColor, QPainterPath, QPolygonF
 if TYPE_CHECKING:
     from .port_item import PortItem
     from .base_item import BaseComponentItem
+    from .label_item import PropertyCrossItem
 
 
 class WaypointHandle(QGraphicsEllipseItem):
@@ -105,6 +106,17 @@ class FlowItem(QGraphicsPathItem):
         self._label = ""  # Custom label text
         self._show_label = False
         
+        # Property cross display (2x2 grid of p, t, h, m)
+        self._property_cross: Optional[PropertyCrossItem] = None
+        self._show_property_cross = False
+        
+        # Flow property values
+        self._pressure: Optional[float] = None
+        self._temperature: Optional[float] = None
+        self._enthalpy: Optional[float] = None
+        self._mass_flow: Optional[float] = None
+        self._quality: Optional[float] = None
+        
         # Manual waypoints (scene coordinates)
         self._waypoints: List[QPointF] = []
         self._waypoint_handles: List[WaypointHandle] = []
@@ -114,6 +126,7 @@ class FlowItem(QGraphicsPathItem):
         
         self._setup()
         self._connect_ports()
+        self._create_property_cross()
         self.update_path()
     
     def _setup(self):
@@ -128,6 +141,12 @@ class FlowItem(QGraphicsPathItem):
         self._source_port.connected_flow = self
         self._target_port.connected_flow = self
     
+    def _create_property_cross(self):
+        """Create the property cross display item."""
+        from .label_item import PropertyCrossItem
+        self._property_cross = PropertyCrossItem(parent_flow=self)
+        self._property_cross.setVisible(self._show_property_cross)
+    
     def disconnect(self):
         """Unregister this flow from ports."""
         if self._source_port:
@@ -140,6 +159,10 @@ class FlowItem(QGraphicsPathItem):
             if handle.scene():
                 handle.scene().removeItem(handle)
         self._waypoint_handles.clear()
+        
+        # Remove property cross
+        if self._property_cross and self._property_cross.scene():
+            self._property_cross.scene().removeItem(self._property_cross)
     
     def _update_pen(self):
         """Update pen based on selection and fluid type."""
@@ -187,6 +210,7 @@ class FlowItem(QGraphicsPathItem):
         path = self._build_path_with_jumps(points)
         self.setPath(path)
         self._update_waypoint_handles()
+        self._update_property_cross_position()
     
     def _create_auto_orthogonal_points(self, start: QPointF, end: QPointF) -> List[QPointF]:
         """
@@ -480,6 +504,24 @@ class FlowItem(QGraphicsPathItem):
             handle.setPos(wp)
             handle.setVisible(self.isSelected())
     
+    def _update_property_cross_position(self):
+        """Position the property cross at the path midpoint."""
+        if not self._property_cross:
+            return
+        
+        # Add to scene if not already
+        scene = self.scene()
+        if scene and self._property_cross.scene() is None:
+            scene.addItem(self._property_cross)
+        
+        path = self.path()
+        if path.isEmpty():
+            return
+        
+        # Position at 50% along path, offset above the line
+        point = path.pointAtPercent(0.5)
+        self._property_cross.set_default_position(QPointF(point.x() - 45, point.y() - 40))
+    
     def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: Optional[QWidget] = None):
         """Paint the flow line and direction arrow."""
         self._update_pen()
@@ -565,7 +607,12 @@ class FlowItem(QGraphicsPathItem):
     
     def contextMenuEvent(self, event):
         """Show context menu for flow line."""
-        from PyQt6.QtWidgets import QInputDialog
+        # Select this item on right-click
+        if not self.isSelected():
+            scene = self.scene()
+            if scene:
+                scene.clearSelection()
+            self.setSelected(True)
         
         menu = QMenu()
         
@@ -579,16 +626,17 @@ class FlowItem(QGraphicsPathItem):
         
         menu.addSeparator()
         
-        # Label options
-        label_menu = menu.addMenu("Label")
-        
-        show_label = label_menu.addAction("Show Label")
+        # Label toggle (simplified - no text prompt)
+        show_label = menu.addAction("Show Label")
         show_label.setCheckable(True)
         show_label.setChecked(self._show_label)
         show_label.triggered.connect(self._toggle_label)
         
-        set_label = label_menu.addAction("Set Label Text...")
-        set_label.triggered.connect(self._prompt_set_label)
+        # Property cross toggle
+        show_cross = menu.addAction("Show Property Cross")
+        show_cross.setCheckable(True)
+        show_cross.setChecked(self._show_property_cross)
+        show_cross.triggered.connect(self._toggle_property_cross)
         
         menu.addSeparator()
         
@@ -621,6 +669,13 @@ class FlowItem(QGraphicsPathItem):
     def _toggle_label(self):
         """Toggle label visibility."""
         self._show_label = not self._show_label
+        self.update()
+    
+    def _toggle_property_cross(self):
+        """Toggle property cross visibility."""
+        self._show_property_cross = not self._show_property_cross
+        if self._property_cross:
+            self._property_cross.setVisible(self._show_property_cross)
         self.update()
     
     def _prompt_set_label(self):
@@ -703,3 +758,84 @@ class FlowItem(QGraphicsPathItem):
     @property
     def target_component(self) -> Optional[BaseComponentItem]:
         return self._target_port.parent_component if self._target_port else None
+    
+    # -------------------------------------------------------------------------
+    # Flow Property Values (for property cross display)
+    # -------------------------------------------------------------------------
+    
+    @property
+    def pressure(self) -> Optional[float]:
+        return self._pressure
+    
+    @pressure.setter
+    def pressure(self, value: Optional[float]):
+        self._pressure = value
+        if self._property_cross:
+            self._property_cross.pressure = value
+    
+    @property
+    def temperature(self) -> Optional[float]:
+        return self._temperature
+    
+    @temperature.setter
+    def temperature(self, value: Optional[float]):
+        self._temperature = value
+        if self._property_cross:
+            self._property_cross.temperature = value
+    
+    @property
+    def enthalpy(self) -> Optional[float]:
+        return self._enthalpy
+    
+    @enthalpy.setter
+    def enthalpy(self, value: Optional[float]):
+        self._enthalpy = value
+        if self._property_cross:
+            self._property_cross.enthalpy = value
+    
+    @property
+    def mass_flow(self) -> Optional[float]:
+        return self._mass_flow
+    
+    @mass_flow.setter
+    def mass_flow(self, value: Optional[float]):
+        self._mass_flow = value
+        if self._property_cross:
+            self._property_cross.mass_flow = value
+    
+    @property
+    def quality(self) -> Optional[float]:
+        return self._quality
+    
+    @quality.setter
+    def quality(self, value: Optional[float]):
+        self._quality = value
+        if self._property_cross:
+            self._property_cross.quality = value
+    
+    def set_flow_properties(self, p: Optional[float] = None, t: Optional[float] = None,
+                            h: Optional[float] = None, m: Optional[float] = None,
+                            x: Optional[float] = None):
+        """Set all flow property values at once."""
+        self._pressure = p
+        self._temperature = t
+        self._enthalpy = h
+        self._mass_flow = m
+        self._quality = x
+        if self._property_cross:
+            self._property_cross.set_values(p, t, h, m, x)
+    
+    @property
+    def show_property_cross(self) -> bool:
+        return self._show_property_cross
+    
+    @show_property_cross.setter
+    def show_property_cross(self, value: bool):
+        self._show_property_cross = value
+        if self._property_cross:
+            self._property_cross.setVisible(value)
+    
+    @property
+    def property_cross(self):
+        """Get the PropertyCrossItem for this flow."""
+        return self._property_cross

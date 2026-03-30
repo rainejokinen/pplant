@@ -462,27 +462,53 @@ class FlowScene(QGraphicsScene):
     # -------------------------------------------------------------------------
     
     def copy_selected(self):
-        """Copy selected components to clipboard."""
+        """Copy selected components and their internal flows to clipboard."""
         from ..items.base_item import BaseComponentItem
+        from ..items.flow_item import FlowItem
         
         self._clipboard.clear()
+        self._clipboard_flows = []
+        
+        # Collect selected components
+        selected_components = []
         for item in self.selectedItems():
             if isinstance(item, BaseComponentItem):
+                selected_components.append(item)
                 self._clipboard.append({
                     'type': item.component_type,
                     'x': item.pos().x(),
                     'y': item.pos().y(),
                     'name': item.name
                 })
+        
+        # Find flows between selected components
+        for flow in self._flows:
+            source_comp = flow.source_component
+            target_comp = flow.target_component
+            
+            if source_comp in selected_components and target_comp in selected_components:
+                # Both ends are in selection - include this flow
+                source_idx = selected_components.index(source_comp)
+                target_idx = selected_components.index(target_comp)
+                self._clipboard_flows.append({
+                    'source_idx': source_idx,
+                    'source_port': flow.source_port.name,
+                    'target_idx': target_idx,
+                    'target_port': flow.target_port.name
+                })
     
     def paste(self):
-        """Paste components from clipboard."""
+        """Paste components and flows from clipboard."""
         if not self._clipboard:
             return
         
         from .undo_commands import PasteCommand
         offset = QPointF(20, 20)  # Offset pasted items
-        cmd = PasteCommand(self, self._clipboard, offset)
+        
+        # Get flow data (may not exist if copied before this feature)
+        flows_data = getattr(self, '_clipboard_flows', [])
+        
+        cmd = PasteCommand(self, self._clipboard, flows_data, offset)
         self._undo_stack.push(cmd)
         
         # Select pasted items

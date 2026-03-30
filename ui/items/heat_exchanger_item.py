@@ -105,29 +105,22 @@ class HeatExchangerItem(BaseComponentItem):
         painter.setPen(QPen(pen_color, pen_width))
         painter.drawRect(rect)
         
-        # Draw X pattern inside (VWO-style)
+        # Draw Z-shaped heating pipe inside (VWO-style zigzag)
         painter.setPen(QPen(self.COLOR_OUTLINE, 1.5))
-        m = 4  # margin from edge
-        # First diagonal
-        painter.drawLine(
-            int(-self.WIDTH/2 + m), int(-self.HEIGHT/2 + m),
-            int(self.WIDTH/2 - m), int(self.HEIGHT/2 - m)
-        )
-        # Second diagonal
-        painter.drawLine(
-            int(-self.WIDTH/2 + m), int(self.HEIGHT/2 - m),
-            int(self.WIDTH/2 - m), int(-self.HEIGHT/2 + m)
-        )
+        m = 6  # margin from edge
+        hw = self.WIDTH / 2 - m
+        hh = self.HEIGHT / 2 - m
         
-        # Draw label above
-        if self._name:
-            painter.setPen(QColor(0, 0, 0))
-            painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
-            painter.drawText(
-                QRectF(-self.WIDTH, -self.HEIGHT/2 - 18, self.WIDTH * 2, 14),
-                Qt.AlignmentFlag.AlignCenter, 
-                self._name
-            )
+        # Z-pattern: horizontal at top, diagonal, horizontal at bottom
+        # Top horizontal
+        painter.drawLine(int(-hw), int(-hh), int(hw), int(-hh))
+        # Diagonal from right-top to left-bottom
+        painter.drawLine(int(hw), int(-hh), int(-hw), int(hh))
+        # Bottom horizontal
+        painter.drawLine(int(-hw), int(hh), int(hw), int(hh))
+        
+        # Draw label if enabled
+        self.paint_label(painter)
 
 
 class CondenserItem(HeatExchangerItem):

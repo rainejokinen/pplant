@@ -19,11 +19,14 @@ if TYPE_CHECKING:
     from ..canvas.flow_scene import FlowScene
     from .port_item import PortItem
     from components.base import Component
+    from .label_item import LabelItem
 
 
 class ResizeHandle(QGraphicsRectItem):
     """
     Small handle in the corner for resizing components.
+    Supports non-uniform scaling (stretch horizontally/vertically).
+    Hold Shift to lock aspect ratio.
     """
     
     SIZE = 8
@@ -33,7 +36,8 @@ class ResizeHandle(QGraphicsRectItem):
         self._parent_item = parent_item
         self._dragging = False
         self._drag_start = QPointF()
-        self._original_scale = 1.0
+        self._original_scale_x = 1.0
+        self._original_scale_y = 1.0
         
         self.setBrush(QBrush(QColor(100, 150, 255)))
         self.setPen(QPen(QColor(50, 100, 200), 1))
@@ -47,7 +51,8 @@ class ResizeHandle(QGraphicsRectItem):
         if event.button() == Qt.MouseButton.LeftButton:
             self._dragging = True
             self._drag_start = event.scenePos()
-            self._original_scale = self._parent_item._scale_factor
+            self._original_scale_x = self._parent_item._scale_x
+            self._original_scale_y = self._parent_item._scale_y
             event.accept()
         else:
             super().mousePressEvent(event)
@@ -55,13 +60,32 @@ class ResizeHandle(QGraphicsRectItem):
     def mouseMoveEvent(self, event):
         if self._dragging:
             delta = event.scenePos() - self._drag_start
-            # Calculate scale change based on drag distance
-            scale_delta = (delta.x() + delta.y()) / 100
-            new_scale = max(
-                self._parent_item.MIN_SCALE,
-                min(self._parent_item.MAX_SCALE, self._original_scale + scale_delta)
-            )
-            self._parent_item._scale_factor = new_scale
+            
+            # Check if Shift is held for lock aspect ratio
+            lock_aspect = event.modifiers() & Qt.KeyboardModifier.ShiftModifier or self._parent_item._lock_aspect_ratio
+            
+            if lock_aspect:
+                # Uniform scaling
+                scale_delta = (delta.x() + delta.y()) / 100
+                new_scale = max(
+                    self._parent_item.MIN_SCALE,
+                    min(self._parent_item.MAX_SCALE, self._original_scale_x + scale_delta)
+                )
+                self._parent_item._scale_x = new_scale
+                self._parent_item._scale_y = new_scale
+            else:
+                # Non-uniform scaling
+                scale_delta_x = delta.x() / 50
+                scale_delta_y = delta.y() / 50
+                self._parent_item._scale_x = max(
+                    self._parent_item.MIN_SCALE,
+                    min(self._parent_item.MAX_SCALE, self._original_scale_x + scale_delta_x)
+                )
+                self._parent_item._scale_y = max(
+                    self._parent_item.MIN_SCALE,
+                    min(self._parent_item.MAX_SCALE, self._original_scale_y + scale_delta_y)
+                )
+            
             self._parent_item._apply_transform()
             self._parent_item._update_resize_handle_position()
             event.accept()
@@ -127,14 +151,29 @@ class BaseComponentItem(QGraphicsObject):
         self._rotation_angle = 0  # degrees (0, 90, 180, 270)
         self._flip_h = False       # horizontal flip
         self._flip_v = False       # vertical flip
-        self._scale_factor = self.DEFAULT_SCALE
+        self._scale_x = self.DEFAULT_SCALE  # Horizontal scale
+        self._scale_y = self.DEFAULT_SCALE  # Vertical scale
+        self._lock_aspect_ratio = True  # Lock aspect ratio by default
         
-        # Label visibility
+        # Label visibility and independent label items
         self._show_label = False
+        self._labels: dict[str, LabelItem] = {}  # key -> LabelItem
         
         self._setup_item()
         self._create_ports()
         self._create_resize_handle()
+        self._create_labels()
+    
+    @property
+    def _scale_factor(self):
+        """Backwards compatibility - average of x and y scales."""
+        return (self._scale_x + self._scale_y) / 2
+    
+    @_scale_factor.setter
+    def _scale_factor(self, value):
+        """Set both scales to the same value."""
+        self._scale_x = value
+        self._scale_y = value
     
     def _setup_item(self):
         """Configure item flags and behavior."""
@@ -153,6 +192,104 @@ class BaseComponentItem(QGraphicsObject):
         """Position the resize handle at the bottom-right of the bounding rect."""
         rect = self.boundingRect()
         self._resize_handle.setPos(rect.right() - 4, rect.bottom() - 4)
+    
+    def _create_labels(self):
+        """
+        Create independent label items for this component.
+        
+        Creates a name label by default. Subclasses can override to add
+        parameter-specific labels.
+        """
+        from .label_item import LabelItem
+        
+        # Create name label (attached to scene, not as child to avoid transforms)
+        name_label = LabelItem(
+            label_key="name",
+            label_text=self._name,
+            parent_component=self
+        )
+        name_label.show_label_text = False  # Just show the name as value
+        name_label.value_text = self._name
+        name_label.setVisible(self._show_label)
+        self._labels["name"] = name_label
+    
+    def _add_label_to_scene(self):
+        """Add all label items to the scene (called when component is added)."""
+        scene = self.scene()
+        if not scene:
+            return
+        for label in self._labels.values():
+            if label.scene() is None:
+                scene.addItem(label)
+        self._update_label_positions()
+    
+    def _remove_labels_from_scene(self):
+        """Remove all label items from scene."""
+        for label in self._labels.values():
+            if label.scene():
+                label.scene().removeItem(label)
+    
+    def _update_label_positions(self):
+        """
+        Update all label positions based on component's scene position.
+        
+        Labels are positioned relative to the component but not affected
+        by the component's transform (rotation/scale/flip).
+        """
+        if not self._labels:
+            return
+        
+        # Get untransformed bounding rect center
+        rect = self.boundingRect()
+        scene_pos = self.scenePos()
+        
+        # Name label: below the component
+        if "name" in self._labels:
+            name_label = self._labels["name"]
+            # Position below component center
+            label_x = scene_pos.x() + rect.center().x()
+            label_y = scene_pos.y() + rect.bottom() + 5
+            name_label.set_default_position(QPointF(label_x, label_y))
+    
+    def get_label(self, key: str):
+        """Get a specific label item by key."""
+        return self._labels.get(key)
+    
+    def add_parameter_label(self, key: str, label_text: str, value_text: str = "", 
+                            units_text: str = "", offset_y: float = 0) -> 'LabelItem':
+        """
+        Add a parameter label to this component.
+        
+        Args:
+            key: Unique identifier for this label
+            label_text: The parameter name (e.g., "Efficiency")
+            value_text: The parameter value (e.g., "88.0")
+            units_text: Units (e.g., "%")
+            offset_y: Vertical offset from default position
+        
+        Returns:
+            The created LabelItem
+        """
+        from .label_item import LabelItem
+        
+        label = LabelItem(
+            label_key=key,
+            label_text=label_text,
+            value_text=value_text,
+            units_text=units_text,
+            parent_component=self
+        )
+        label.setVisible(self._show_label)
+        label._offset = QPointF(0, offset_y)
+        self._labels[key] = label
+        
+        # Add to scene if we're already in one
+        scene = self.scene()
+        if scene and label.scene() is None:
+            scene.addItem(label)
+            self._update_label_positions()
+        
+        return label
     
     @abstractmethod
     def _create_ports(self):
@@ -267,30 +404,14 @@ class BaseComponentItem(QGraphicsObject):
     
     def paint_label(self, painter: QPainter):
         """
-        Paint the component name label below the item.
+        Legacy method - labels are now independent items.
         
-        Call this from paint() if label should be shown.
+        This method is kept for backwards compatibility but does nothing.
+        Labels are managed by LabelItem instances in self._labels.
         """
-        if not self._show_label or not self._name:
-            return
-        
-        from PyQt6.QtGui import QFont, QFontMetrics
-        
-        font = QFont()
-        font.setPointSize(self.LABEL_FONT_SIZE)
-        painter.setFont(font)
-        painter.setPen(self.LABEL_COLOR)
-        
-        # Position label below the bounding rect
-        rect = self.boundingRect()
-        fm = QFontMetrics(font)
-        text_width = fm.horizontalAdvance(self._name)
-        
-        # Center horizontally, position below
-        x = rect.center().x() - text_width / 2
-        y = rect.bottom() + fm.height()
-        
-        painter.drawText(int(x), int(y), self._name)
+        # Labels are now independent QGraphicsTextItem instances
+        # They are positioned and updated via _update_label_positions()
+        pass
     
     @property
     def show_label(self) -> bool:
@@ -300,11 +421,18 @@ class BaseComponentItem(QGraphicsObject):
     @show_label.setter
     def show_label(self, value: bool):
         self._show_label = value
+        # Update visibility of all label items
+        for label in self._labels.values():
+            label.setVisible(value)
         self.update()
     
     def toggle_label(self):
         """Toggle label visibility."""
         self.show_label = not self._show_label
+    
+    def _toggle_lock_aspect(self):
+        """Toggle lock aspect ratio for scaling."""
+        self._lock_aspect_ratio = not self._lock_aspect_ratio
     
     # -------------------------------------------------------------------------
     # Event Handling
@@ -328,10 +456,19 @@ class BaseComponentItem(QGraphicsObject):
             # Notify connected flows to update their paths
             self.position_changed.emit(self)
             self._update_connected_flows()
+            # Update label positions (they follow component but aren't children)
+            self._update_label_positions()
         
         if change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
             # Show/hide resize handle based on selection
             self._resize_handle.setVisible(value)
+        
+        if change == QGraphicsItem.GraphicsItemChange.ItemSceneHasChanged:
+            # Component added to or removed from scene
+            if value:  # Added to scene
+                self._add_label_to_scene()
+            else:  # Removed from scene
+                self._remove_labels_from_scene()
         
         return super().itemChange(change, value)
     
@@ -366,6 +503,13 @@ class BaseComponentItem(QGraphicsObject):
     
     def contextMenuEvent(self, event):
         """Show context menu."""
+        # Select this item on right-click
+        if not self.isSelected():
+            scene = self.scene()
+            if scene:
+                scene.clearSelection()
+            self.setSelected(True)
+        
         menu = QMenu()
         
         # Transform submenu
@@ -401,6 +545,13 @@ class BaseComponentItem(QGraphicsObject):
         
         reset_transform = transform_menu.addAction("Reset Transform")
         reset_transform.triggered.connect(self.reset_transform)
+        
+        transform_menu.addSeparator()
+        
+        lock_aspect = transform_menu.addAction("Lock Aspect Ratio")
+        lock_aspect.setCheckable(True)
+        lock_aspect.setChecked(self._lock_aspect_ratio)
+        lock_aspect.triggered.connect(self._toggle_lock_aspect)
         
         menu.addSeparator()
         
@@ -467,8 +618,8 @@ class BaseComponentItem(QGraphicsObject):
         """Apply current rotation, flip, and scale to the item."""
         transform = QTransform()
         
-        # Apply scale
-        transform.scale(self._scale_factor, self._scale_factor)
+        # Apply scale (non-uniform)
+        transform.scale(self._scale_x, self._scale_y)
         
         # Apply flip
         flip_x = -1 if self._flip_h else 1
@@ -580,6 +731,9 @@ class BaseComponentItem(QGraphicsObject):
     @name.setter
     def name(self, value: str):
         self._name = value
+        # Update name label
+        if "name" in self._labels:
+            self._labels["name"].value_text = value
         self.update()
     
     @property

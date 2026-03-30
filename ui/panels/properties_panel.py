@@ -284,10 +284,68 @@ class PropertiesPanel(QDockWidget):
         flip_label = QLabel(" + ".join(flip_text) if flip_text else "None")
         pos_layout.addRow("Flip:", flip_label)
         
-        scale_label = QLabel(f"{item.scale_factor:.1f}x")
+        # Scale display (show X and Y separately if different)
+        if hasattr(item, '_scale_x') and hasattr(item, '_scale_y'):
+            if abs(item._scale_x - item._scale_y) < 0.01:
+                scale_text = f"{item._scale_x:.1f}x"
+            else:
+                scale_text = f"X:{item._scale_x:.1f} Y:{item._scale_y:.1f}"
+        else:
+            scale_text = f"{item.scale_factor:.1f}x"
+        scale_label = QLabel(scale_text)
         pos_layout.addRow("Scale:", scale_label)
         
         general_layout.addWidget(pos_group)
+        
+        # Label group - expanded settings
+        label_group = QGroupBox("Labels")
+        label_layout = QFormLayout(label_group)
+        
+        from PyQt6.QtWidgets import QCheckBox, QComboBox, QPushButton, QColorDialog, QHBoxLayout
+        
+        # Master show/hide
+        show_label_cb = QCheckBox()
+        show_label_cb.setChecked(item.show_label)
+        show_label_cb.stateChanged.connect(lambda state: setattr(item, 'show_label', state == Qt.CheckState.Checked.value))
+        label_layout.addRow("Show Labels:", show_label_cb)
+        
+        # Get the name label for settings (if exists)
+        name_label = item.get_label("name") if hasattr(item, 'get_label') else None
+        
+        if name_label:
+            # Font size
+            font_size_spin = QSpinBox()
+            font_size_spin.setRange(6, 24)
+            font_size_spin.setValue(name_label.font_size)
+            font_size_spin.valueChanged.connect(lambda v: setattr(name_label, 'font_size', v))
+            label_layout.addRow("Font Size:", font_size_spin)
+            
+            # Bold toggle
+            bold_cb = QCheckBox()
+            bold_cb.setChecked(name_label.bold)
+            bold_cb.stateChanged.connect(lambda state: setattr(name_label, 'bold', state == Qt.CheckState.Checked.value))
+            label_layout.addRow("Bold:", bold_cb)
+            
+            # Color picker
+            color_btn = QPushButton()
+            color_btn.setFixedSize(60, 24)
+            color_btn.setStyleSheet(f"background-color: {name_label.color.name()}; border: 1px solid #666;")
+            
+            def pick_color():
+                color = QColorDialog.getColor(name_label.color, None, "Label Color")
+                if color.isValid():
+                    name_label.color = color
+                    color_btn.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #666;")
+            
+            color_btn.clicked.connect(pick_color)
+            label_layout.addRow("Color:", color_btn)
+            
+            # Reset position button
+            reset_btn = QPushButton("Reset Position")
+            reset_btn.clicked.connect(name_label.reset_position)
+            label_layout.addRow("", reset_btn)
+        
+        general_layout.addWidget(label_group)
         
         # Ports group - show what each port is connected to
         ports_group = QGroupBox("Ports")
@@ -537,6 +595,26 @@ class PropertiesPanel(QDockWidget):
         conn_layout.addRow("Waypoints:", QLabel(str(waypoints)))
         
         general_layout.addWidget(conn_group)
+        
+        # Display settings group
+        from PyQt6.QtWidgets import QCheckBox
+        
+        display_group = QGroupBox("Display")
+        display_layout = QFormLayout(display_group)
+        
+        # Show label toggle
+        show_label_cb = QCheckBox()
+        show_label_cb.setChecked(flow.show_label)
+        show_label_cb.stateChanged.connect(lambda state: setattr(flow, 'show_label', state == Qt.CheckState.Checked.value))
+        display_layout.addRow("Show Label:", show_label_cb)
+        
+        # Show property cross toggle
+        show_cross_cb = QCheckBox()
+        show_cross_cb.setChecked(flow.show_property_cross)
+        show_cross_cb.stateChanged.connect(lambda state: setattr(flow, 'show_property_cross', state == Qt.CheckState.Checked.value))
+        display_layout.addRow("Show Property Cross:", show_cross_cb)
+        
+        general_layout.addWidget(display_group)
         general_layout.addStretch()
         
         # === Parameters Tab ===

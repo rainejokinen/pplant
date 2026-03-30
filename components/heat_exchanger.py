@@ -167,7 +167,7 @@ class HeatExchanger(PressureBoundaryComponent, BalanceComponent, ABC):
         return cold_out.mass_flow * cold_out.enthalpy - cold_in.mass_flow * cold_in.enthalpy
 
 
-class SteamWaterHeatExchanger(HeatExchanger, ABC):
+class SteamWaterHeatExchanger(HeatExchanger):
     """
     Abstract base for heat exchangers with steam on the hot side.
     
@@ -188,7 +188,7 @@ class SteamWaterHeatExchanger(HeatExchanger, ABC):
         return cls._sw_hx_instances.copy()
 
 
-class Condenser(SteamWaterHeatExchanger):
+class Condenser(HeatExchanger):
     """
     Main turbine exhaust condenser.
     
